@@ -58,6 +58,33 @@ th{color:var(--text-muted);font-weight:600;font-size:.8rem;text-transform:upperc
 </head>
 <body>
 
+<!-- 비밀번호 잠금 -->
+<div id="lockScreen" style="position:fixed;inset:0;background:var(--bg);z-index:1000;display:flex;align-items:center;justify-content:center">
+  <div style="background:var(--card);border:1px solid var(--border);border-radius:16px;padding:32px;width:360px;text-align:center">
+    <h2 style="margin-bottom:8px">QANDA ASO Monitor</h2>
+    <p style="color:var(--text-muted);font-size:.9rem;margin-bottom:20px">접근 비밀번호를 입력하세요</p>
+    <input type="password" id="lockPw" placeholder="비밀번호" style="width:100%;padding:10px 12px;background:var(--bg);border:1px solid var(--border);border-radius:8px;color:var(--text);font-size:1rem;text-align:center;outline:none;margin-bottom:12px">
+    <div id="lockError" style="color:var(--red);font-size:.85rem;margin-bottom:12px;display:none">비밀번호가 틀렸습니다</div>
+    <button onclick="checkPw()" style="width:100%;padding:12px;background:var(--accent);color:#fff;border:none;border-radius:9999px;font-size:1rem;font-weight:700;cursor:pointer">확인</button>
+  </div>
+</div>
+<script>
+const PW_HASH='0ffe1abd1a08215353c233d6e009613e95eec4253832a761af28ff37ac5a150c';
+async function sha256(str){const buf=await crypto.subtle.digest('SHA-256',new TextEncoder().encode(str));return [...new Uint8Array(buf)].map(b=>b.toString(16).padStart(2,'0')).join('')}
+async function checkPw(){
+  const pw=document.getElementById('lockPw').value;
+  const hash=await sha256(pw);
+  if(hash===PW_HASH){
+    document.getElementById('lockScreen').style.display='none';
+    sessionStorage.setItem('aso_auth','1');
+  } else {
+    document.getElementById('lockError').style.display='';
+  }
+}
+document.getElementById('lockPw').addEventListener('keydown',e=>{if(e.key==='Enter')checkPw()});
+if(sessionStorage.getItem('aso_auth')==='1') document.getElementById('lockScreen').style.display='none';
+</script>
+
 <div class="header">
   <h1>QANDA ASO Monitor</h1>
   <div class="tabs" id="platformTabs">
