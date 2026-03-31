@@ -149,6 +149,12 @@ if(sessionStorage.getItem('aso_auth')==='1') document.getElementById('lockScreen
   <div class="chart-container" id="cvrChartWrap"><canvas id="cvrChart"></canvas></div>
 </div>
 
+<div class="section" id="storeViewSection">
+  <h2>스토어 등록정보 방문 수 추이</h2>
+  <div id="storeViewNotice" style="display:none;color:var(--text-muted);padding:20px">Play Store 데이터만 지원</div>
+  <div class="chart-container" id="storeViewChartWrap"><canvas id="storeViewChart"></canvas></div>
+</div>
+
 <div class="section">
   <h2>어노테이션 관리</h2>
   <div class="card">
@@ -180,7 +186,7 @@ let allDownloadData = [];
 let allCategoryData = [];
 let allAnnotations = [];
 let selectedKeywords = new Set();
-let keywordChart, downloadChart, categoryChart, yoyChart, asoImpactChart, cvrChart;
+let keywordChart, downloadChart, categoryChart, yoyChart, asoImpactChart, cvrChart, storeViewChart;
 let allStoreViewData = [];
 
 const COLORS = ['#4f8cff','#22c55e','#f59e0b','#ef4444','#a855f7','#06b6d4','#ec4899','#84cc16','#f97316','#6366f1',
@@ -830,6 +836,60 @@ function renderCvrChart(){
   }
 }
 
+function renderStoreViewChart(){
+  const wrap = document.getElementById('storeViewChartWrap');
+  const notice = document.getElementById('storeViewNotice');
+  if(platform==='ios'){
+    wrap.style.display='none'; notice.style.display='';
+    if(storeViewChart){storeViewChart.destroy();storeViewChart=null;}
+    return;
+  }
+  wrap.style.display=''; notice.style.display='none';
+
+  const psViews = allStoreViewData.filter(d=>d.platform==='playstore');
+  const dates2025 = psViews.filter(d=>d.date.startsWith('2025')).sort((a,b)=>a.date.localeCompare(b.date));
+  const dates2026 = psViews.filter(d=>d.date.startsWith('2026')).sort((a,b)=>a.date.localeCompare(b.date));
+
+  const map2025 = Object.fromEntries(dates2025.map(d=>[d.date.slice(5),d.views]));
+  const map2026 = Object.fromEntries(dates2026.map(d=>[d.date.slice(5),d.views]));
+
+  const mmdd2026 = Object.keys(map2026).sort();
+  const minMM = mmdd2026[0]||'01-01';
+  const maxMM = mmdd2026[mmdd2026.length-1]||'03-31';
+  const allMMDD = [...new Set([...Object.keys(map2025),...Object.keys(map2026)])].sort().filter(d=>d>=minMM&&d<=maxMM);
+
+  const cfg = {
+    type:'line',
+    data:{
+      labels:allMMDD,
+      datasets:[
+        {label:'2025',data:allMMDD.map(d=>map2025[d]??null),borderColor:'#666',backgroundColor:'#66666633',tension:0.3,pointRadius:2,spanGaps:true,borderWidth:1.5,borderDash:[4,4]},
+        {label:'2026',data:allMMDD.map(d=>map2026[d]??null),borderColor:'#4f8cff',backgroundColor:'#4f8cff33',tension:0.3,pointRadius:2,spanGaps:true,borderWidth:2}
+      ]
+    },
+    options:{
+      responsive:true,maintainAspectRatio:false,
+      scales:{
+        y:{title:{display:true,text:'방문 수',color:'#888'},ticks:{color:'#888'},grid:{color:'#2a2a2a'}},
+        x:{ticks:{color:'#888',maxTicksLimit:15},grid:{color:'#2a2a2a'}}
+      },
+      interaction:{mode:'index',intersect:false},
+      plugins:{
+        tooltip:{mode:'index',intersect:false,callbacks:{title:ctx=>ctx[0]?.label||'',label:ctx=>ctx.raw!=null?`${ctx.dataset.label}: ${ctx.raw.toLocaleString('ko-KR')}회`:null}},
+        legend:{labels:{color:'#e8e8e8',usePointStyle:true,pointStyle:'circle'}},
+        annotation:{annotations:Object.fromEntries(getAnnoLinesMMDD(allMMDD).map((a,i)=>['line'+i,a]))}
+      }
+    }
+  };
+
+  if(storeViewChart){storeViewChart.destroy()}
+  const wrapEl = document.getElementById('storeViewChartWrap');
+  if(!document.getElementById('storeViewChart')){wrapEl.innerHTML='<canvas id="storeViewChart"></canvas>';}
+  const ctx = document.getElementById('storeViewChart');
+  ctx.parentElement.style.height = '380px';
+  storeViewChart = new Chart(ctx, cfg);
+}
+
 // --- Annotations table ---
 function renderAnnoTable(){
   const tbody = document.getElementById('annoBody');
@@ -877,6 +937,7 @@ async function refreshAnnotations(){
   renderYoyChart();
 
   renderCvrChart();
+  renderStoreViewChart();
 }
 
 // --- Platform switch ---
@@ -903,6 +964,7 @@ function updateAll(){
   renderYoyChart();
 
   renderCvrChart();
+  renderStoreViewChart();
   renderAnnoTable();
 }
 
