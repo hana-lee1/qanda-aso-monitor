@@ -1,0 +1,892 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>QANDA ASO Monitor</title>
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4"></script>
+<script src="https://cdn.jsdelivr.net/npm/chartjs-plugin-annotation@3"></script>
+<style>
+*{margin:0;padding:0;box-sizing:border-box}
+:root{--bg:#0f0f0f;--card:#1a1a1a;--border:#2a2a2a;--text:#e8e8e8;--text-muted:#888;--accent:#4f8cff;--green:#22c55e;--red:#ef4444;--radius:12px}
+body{background:var(--bg);color:var(--text);font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;line-height:1.6;padding:20px;max-width:1400px;margin:0 auto}
+h1{font-size:1.8rem;font-weight:700}
+h2{font-size:1.2rem;font-weight:600;margin-bottom:12px;color:var(--text-muted)}
+.header{display:flex;justify-content:space-between;align-items:center;margin-bottom:28px;flex-wrap:wrap;gap:12px}
+.tabs{display:flex;background:var(--card);border-radius:var(--radius);overflow:hidden;border:1px solid var(--border)}
+.tabs button{background:none;border:none;color:var(--text-muted);padding:10px 22px;cursor:pointer;font-size:.9rem;transition:all .2s}
+.tabs button.active{background:var(--accent);color:#fff;font-weight:600}
+.tabs button:hover:not(.active){background:var(--border)}
+.cards-row{display:grid;grid-template-columns:repeat(auto-fit,minmax(280px,1fr));gap:16px;margin-bottom:32px}
+.card{background:var(--card);border:1px solid var(--border);border-radius:var(--radius);padding:20px}
+.card-label{font-size:.85rem;color:var(--text-muted);margin-bottom:6px}
+.card-value{font-size:1.5rem;font-weight:700}
+.card-value .arrow{margin:0 6px;color:var(--text-muted)}
+.improve{color:var(--green)}
+.worsen{color:var(--red)}
+.neutral{color:var(--text-muted)}
+.section{margin-bottom:36px}
+.chart-container{background:var(--card);border:1px solid var(--border);border-radius:var(--radius);padding:20px;margin-bottom:16px}
+.chart-container canvas{width:100%!important;max-height:400px}
+.keyword-toggles{display:flex;flex-wrap:wrap;gap:8px;margin-bottom:12px}
+.keyword-toggles label{font-size:.8rem;background:var(--border);padding:4px 10px;border-radius:6px;cursor:pointer;user-select:none;transition:background .2s}
+.keyword-toggles label.checked{background:var(--accent);color:#fff}
+.keyword-toggles input{display:none}
+select,input,textarea,button.btn{background:var(--card);color:var(--text);border:1px solid var(--border);border-radius:8px;padding:8px 12px;font-size:.9rem;outline:none}
+select:focus,input:focus,textarea:focus{border-color:var(--accent)}
+textarea{resize:vertical;min-height:60px}
+button.btn{cursor:pointer;transition:background .2s}
+button.btn-primary{background:var(--accent);border-color:var(--accent);color:#fff;font-weight:600}
+button.btn-primary:hover{background:#3a73e0}
+button.btn-danger{background:transparent;border-color:var(--red);color:var(--red)}
+button.btn-danger:hover{background:var(--red);color:#fff}
+.anno-form{display:grid;grid-template-columns:1fr 1fr 1fr 2fr auto;gap:10px;align-items:end;margin-top:12px}
+.anno-form>div{display:flex;flex-direction:column;gap:4px}
+.anno-form>div label{font-size:.8rem;color:var(--text-muted)}
+table{width:100%;border-collapse:collapse;font-size:.9rem}
+th,td{text-align:left;padding:10px 12px;border-bottom:1px solid var(--border)}
+th{color:var(--text-muted);font-weight:600;font-size:.8rem;text-transform:uppercase}
+.loading{text-align:center;padding:40px;color:var(--text-muted)}
+.anno-compare-cards{display:grid;grid-template-columns:repeat(auto-fit,minmax(250px,1fr));gap:16px;margin-top:16px}
+.anno-select-row{display:flex;align-items:center;gap:12px}
+@media(max-width:768px){
+  .anno-form{grid-template-columns:1fr 1fr}
+  .header{flex-direction:column;align-items:flex-start}
+}
+</style>
+</head>
+<body>
+
+<div class="header">
+  <h1>QANDA ASO Monitor</h1>
+  <div class="tabs" id="platformTabs">
+    <button class="active" data-platform="ios">iOS</button>
+    <button data-platform="playstore">Play Store</button>
+    <button data-platform="both">Both</button>
+  </div>
+</div>
+
+<div class="section">
+  <div style="display:flex;align-items:center;gap:16px;margin-bottom:16px;flex-wrap:wrap">
+    <h2 style="margin:0">PoP 비교</h2>
+    <label style="font-size:.8rem;color:var(--text-muted)">기간</label>
+    <input type="date" id="popAfterStart" style="width:140px">
+    <span style="color:var(--text-muted)">~</span>
+    <input type="date" id="popAfterEnd" style="width:140px">
+    <button class="btn btn-primary" id="popCompareBtn" style="padding:6px 16px">비교</button>
+    <span id="popPeriodLabel" style="font-size:.8rem;color:var(--text-muted)"></span>
+  </div>
+  <div class="cards-row" id="summaryCards">
+    <div class="card"><div class="card-label">평균 키워드 순위</div><div class="card-value" id="summaryKeyword">-</div></div>
+    <div class="card"><div class="card-label">일 다운로드</div><div class="card-value" id="summaryDownloads">-</div></div>
+    <div class="card"><div class="card-label">교육 카테고리 순위</div><div class="card-value" id="summaryCategory">-</div></div>
+    <div class="card"><div class="card-label">스토어 CVR</div><div class="card-value" id="summaryCvr">-</div></div>
+    <div class="card"><div class="card-label">ASO 순수 임팩트 (YoY 보정)</div><div class="card-value" id="summaryAsoImpact">-</div><div id="summaryAsoMethod" style="font-size:.65rem;color:var(--text-muted);margin-top:8px;line-height:1.5;border-top:1px solid var(--border);padding-top:8px"></div></div>
+  </div>
+</div>
+
+<div class="section" id="keywordSection">
+  <h2>키워드 순위 추이</h2>
+  <div class="keyword-toggles" id="keywordToggles"></div>
+  <div class="chart-container"><canvas id="keywordChart"></canvas></div>
+  <div class="card" id="keywordPopTable" style="margin-top:16px;display:none">
+    <h3 style="font-size:.95rem;margin-bottom:12px">키워드별 PoP 순위 비교</h3>
+    <table style="width:100%">
+      <thead><tr><th>키워드</th><th>Before 평균</th><th>After 평균</th><th>변화</th></tr></thead>
+      <tbody id="keywordPopBody"></tbody>
+    </table>
+  </div>
+</div>
+
+<div class="section">
+  <h2>신규 오가닉 다운로드 추이</h2>
+  <div class="chart-container"><canvas id="downloadChart"></canvas></div>
+</div>
+
+<div class="section">
+  <h2>교육 카테고리 순위 추이</h2>
+  <div class="chart-container"><canvas id="categoryChart"></canvas></div>
+</div>
+
+<div class="section" id="yoySection">
+  <h2>YoY 신규 Install 비교</h2>
+  <div id="yoyNotice" style="display:none;color:var(--text-muted);padding:20px">Play Store 데이터만 지원</div>
+  <div class="chart-container" id="yoyChartWrap"><canvas id="yoyChart"></canvas></div>
+</div>
+
+
+<div class="section" id="cvrSection">
+  <h2>스토어 방문 → Install 전환율 (CVR)</h2>
+  <div id="cvrNotice" style="display:none;color:var(--text-muted);padding:20px">Play Store 데이터만 지원</div>
+  <div class="chart-container" id="cvrChartWrap"><canvas id="cvrChart"></canvas></div>
+</div>
+
+<div class="section">
+  <h2>어노테이션 관리</h2>
+  <div class="card">
+    <table id="annoTable">
+      <thead><tr><th>날짜</th><th>플랫폼</th><th>라벨</th><th>메모</th><th></th></tr></thead>
+      <tbody id="annoBody"><tr><td colspan="5" class="loading">로딩중...</td></tr></tbody>
+    </table>
+    <div class="anno-form" id="annoForm">
+      <div><label>날짜</label><input type="date" id="annoDate"></div>
+      <div><label>플랫폼</label><select id="annoPlatform"><option value="ios">iOS</option><option value="playstore">Play Store</option><option value="both">Both</option></select></div>
+      <div><label>라벨</label><input type="text" id="annoLabel" placeholder="예: 메타데이터 업데이트"></div>
+      <div><label>메모</label><textarea id="annoNote" placeholder="상세 내용..."></textarea></div>
+      <div style="align-self:end"><button class="btn btn-primary" id="annoAdd">추가</button></div>
+    </div>
+  </div>
+</div>
+
+<script>
+const SUPABASE_URL = 'https://wgzpqbuldhhgnkvcbziw.supabase.co';
+const SUPABASE_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6IndnenBxYnVsZGhoZ25rdmNieml3Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzQ4MjYzMDIsImV4cCI6MjA5MDQwMjMwMn0.RVxI-kVZniF8DXhAhRfW2bM9uJE_q9qMYv306oxFXH8';
+const sb = supabase.createClient(SUPABASE_URL, SUPABASE_KEY);
+
+const IOS_KEYWORDS = ['ebs','개념원리ai','공부','공부앱','과학','답지','대성마이맥','메가스터디','모의고사','문제','문제집','수학','수학문제풀이','열품타','이투스','찰칵','풀이','수학대왕','올클','내신'];
+const PS_KEYWORDS = ['개념원리ai','공부','답지','대성마이맥','디지털교과서','모의고사','문제','문제집','수학','수학대왕','수학문제','수학문제풀이','숙제','열품타','오르조','올클','인강','풀이','내신','찰칵'];
+
+let platform = 'ios';
+let allKeywordData = [];
+let allDownloadData = [];
+let allCategoryData = [];
+let allAnnotations = [];
+let selectedKeywords = new Set();
+let keywordChart, downloadChart, categoryChart, yoyChart, asoImpactChart, cvrChart;
+let allStoreViewData = [];
+
+const COLORS = ['#4f8cff','#22c55e','#f59e0b','#ef4444','#a855f7','#06b6d4','#ec4899','#84cc16','#f97316','#6366f1',
+  '#14b8a6','#e879f9','#facc15','#fb923c','#38bdf8','#c084fc','#4ade80','#f472b6','#a3e635','#2dd4bf'];
+
+function fmt(n){return n==null?'-':Number(n).toLocaleString('ko-KR')}
+function fmtRank(n){return n==null?'-':Math.round(n)+'위'}
+function pct(a,b){if(!a||!b)return '';const p=((b-a)/a*100);return (p>0?'+':'')+p.toFixed(1)+'%'}
+function rankDir(before,after){
+  if(before==null||after==null)return{cls:'neutral',label:''};
+  if(after<before)return{cls:'improve',label:' (상승)'};
+  if(after>before)return{cls:'worsen',label:' (하락)'};
+  return{cls:'neutral',label:' (유지)'};
+}
+function dlDir(before,after){
+  if(before==null||after==null)return{cls:'neutral',label:''};
+  if(after>before)return{cls:'improve',label:` (${pct(before,after)} 증가)`};
+  if(after<before)return{cls:'worsen',label:` (${pct(before,after)} 감소)`};
+  return{cls:'neutral',label:' (유지)'};
+}
+function dateStr(d){return new Date(d).toISOString().slice(0,10)}
+function addDays(d,n){const r=new Date(d);r.setDate(r.getDate()+n);return dateStr(r)}
+
+// --- Data fetching ---
+async function fetchAllRows(table){
+  let all=[], from=0, pageSize=1000;
+  while(true){
+    const {data,error}=await sb.from(table).select('*').order('date',{ascending:true}).range(from,from+pageSize-1);
+    if(error)break;
+    all=all.concat(data||[]);
+    if(!data||data.length<pageSize)break;
+    from+=pageSize;
+  }
+  return all;
+}
+async function fetchAll(){
+  [allKeywordData, allDownloadData, allCategoryData, allAnnotations, allStoreViewData] = await Promise.all([
+    fetchAllRows('aso_keyword_rankings'),
+    fetchAllRows('aso_downloads'),
+    fetchAllRows('aso_category_rankings'),
+    fetchAllRows('aso_annotations'),
+    fetchAllRows('aso_store_views'),
+  ]);
+}
+
+function filterPlatform(data, plat){
+  if(plat==='both')return data;
+  return data.filter(d=>d.platform===plat);
+}
+
+function getKeywordsForPlatform(plat){
+  if(plat==='ios')return IOS_KEYWORDS;
+  if(plat==='playstore')return PS_KEYWORDS;
+  return [...new Set([...IOS_KEYWORDS,...PS_KEYWORDS])];
+}
+
+function getAnnotationsForPlatform(plat){
+  return allAnnotations.filter(a=>a.platform===plat||a.platform==='both'||(plat==='both'));
+}
+
+// --- Summary cards ---
+function updateSummary(){
+  const kwData = filterPlatform(allKeywordData, platform);
+  const dlData = filterPlatform(allDownloadData, platform);
+  const catData = filterPlatform(allCategoryData, platform);
+
+  // Find latest date and 7-day-ago date
+  const kwDates = [...new Set(kwData.map(d=>d.date))].sort();
+  const dlDates = [...new Set(dlData.map(d=>d.date))].sort();
+  const catDates = [...new Set(catData.map(d=>d.date))].sort();
+
+  // Keyword avg
+  const latestKwDate = kwDates[kwDates.length-1];
+  const weekAgoKwDate = kwDates.find(d=>d<=addDays(latestKwDate,-7))||kwDates[Math.max(0,kwDates.length-8)];
+  const latestKw = kwData.filter(d=>d.date===latestKwDate);
+  const weekAgoKw = kwData.filter(d=>d.date===weekAgoKwDate);
+  const avgLatestKw = latestKw.length? latestKw.reduce((s,d)=>s+d.rank,0)/latestKw.length : null;
+  const avgWeekAgoKw = weekAgoKw.length? weekAgoKw.reduce((s,d)=>s+d.rank,0)/weekAgoKw.length : null;
+  const kwDir = rankDir(avgWeekAgoKw, avgLatestKw);
+  document.getElementById('summaryKeyword').innerHTML = avgWeekAgoKw!=null&&avgLatestKw!=null
+    ? `<span class="${kwDir.cls}">${fmtRank(avgWeekAgoKw)} <span class="arrow">→</span> ${fmtRank(avgLatestKw)}${kwDir.label}</span>`
+    : '-';
+
+  // Downloads
+  const latestDlDate = dlDates[dlDates.length-1];
+  const weekAgoDlDate = dlDates.find(d=>d<=addDays(latestDlDate,-7))||dlDates[Math.max(0,dlDates.length-8)];
+  const latestDl = dlData.filter(d=>d.date===latestDlDate);
+  const weekAgoDl = dlData.filter(d=>d.date===weekAgoDlDate);
+  const sumLatestDl = latestDl.reduce((s,d)=>s+d.downloads,0);
+  const sumWeekAgoDl = weekAgoDl.reduce((s,d)=>s+d.downloads,0);
+  const dlD = dlDir(sumWeekAgoDl, sumLatestDl);
+  document.getElementById('summaryDownloads').innerHTML = sumWeekAgoDl||sumLatestDl
+    ? `<span class="${dlD.cls}">${fmt(sumWeekAgoDl)}회 <span class="arrow">→</span> ${fmt(sumLatestDl)}회${dlD.label}</span>`
+    : '-';
+
+  // Category
+  const latestCatDate = catDates[catDates.length-1];
+  const weekAgoCatDate = catDates.find(d=>d<=addDays(latestCatDate,-7))||catDates[Math.max(0,catDates.length-8)];
+  const latestCat = catData.filter(d=>d.date===latestCatDate);
+  const weekAgoCat = catData.filter(d=>d.date===weekAgoCatDate);
+  const avgLatestCat = latestCat.length? latestCat.reduce((s,d)=>s+d.rank,0)/latestCat.length : null;
+  const avgWeekAgoCat = weekAgoCat.length? weekAgoCat.reduce((s,d)=>s+d.rank,0)/weekAgoCat.length : null;
+  const catDir = rankDir(avgWeekAgoCat, avgLatestCat);
+  document.getElementById('summaryCategory').innerHTML = avgWeekAgoCat!=null&&avgLatestCat!=null
+    ? `<span class="${catDir.cls}">${fmtRank(avgWeekAgoCat)} <span class="arrow">→</span> ${fmtRank(avgLatestCat)}${catDir.label}</span>`
+    : '-';
+
+  document.getElementById('summaryCvr').innerHTML = '<span style="color:var(--text-muted)">기간을 선택하세요</span>';
+  document.getElementById('summaryAsoImpact').innerHTML = '<span style="color:var(--text-muted)">기간을 선택하세요</span>';
+  document.getElementById('summaryAsoMethod').innerHTML = '';
+}
+
+// --- PoP comparison ---
+function updatePopCompare(){
+  const aStart = document.getElementById('popAfterStart').value;
+  const aEnd = document.getElementById('popAfterEnd').value;
+  const periodLabel = document.getElementById('popPeriodLabel');
+
+  if(!aStart||!aEnd){
+    periodLabel.textContent = '';
+    document.getElementById('keywordPopTable').style.display='none';
+    updateSummary();
+    return;
+  }
+
+  const daysAfter = Math.round((new Date(aEnd)-new Date(aStart))/(86400000))+1;
+  const bEnd = addDays(aStart,-1);
+  const bStart = addDays(aStart,-daysAfter);
+  const daysBefore = daysAfter;
+  periodLabel.textContent = `${bStart} ~ ${bEnd}(${daysBefore}일) vs ${aStart} ~ ${aEnd}(${daysAfter}일)`;
+
+  const plat = platform==='both'?null:platform;
+
+  // Keyword compare
+  let kwBefore = allKeywordData.filter(r=>r.date>=bStart&&r.date<=bEnd&&(plat?r.platform===plat:true));
+  let kwAfter = allKeywordData.filter(r=>r.date>=aStart&&r.date<=aEnd&&(plat?r.platform===plat:true));
+  const avgKwB = kwBefore.length? kwBefore.reduce((s,r)=>s+r.rank,0)/kwBefore.length:null;
+  const avgKwA = kwAfter.length? kwAfter.reduce((s,r)=>s+r.rank,0)/kwAfter.length:null;
+  const kwD = rankDir(avgKwB,avgKwA);
+  document.getElementById('summaryKeyword').innerHTML = avgKwB!=null&&avgKwA!=null
+    ? `<span class="${kwD.cls}">${fmtRank(avgKwB)} <span class="arrow">→</span> ${fmtRank(avgKwA)}${kwD.label}</span>` : '-';
+
+  // Keyword PoP table
+  const kwPopTable = document.getElementById('keywordPopTable');
+  const kwPopBody = document.getElementById('keywordPopBody');
+  if(platform!=='both'){
+    kwPopTable.style.display='';
+    const keywords = getKeywordsForPlatform(platform);
+    const rows = [];
+    keywords.forEach(kw=>{
+      const bRows = kwBefore.filter(r=>r.keyword===kw);
+      const aRows = kwAfter.filter(r=>r.keyword===kw);
+      const avgB = bRows.length? bRows.reduce((s,r)=>s+r.rank,0)/bRows.length : null;
+      const avgA = aRows.length? aRows.reduce((s,r)=>s+r.rank,0)/aRows.length : null;
+      rows.push({kw, avgB, avgA});
+    });
+    // Sort by improvement (biggest rank drop first)
+    rows.sort((a,b)=>{
+      if(a.avgB==null||a.avgA==null) return 1;
+      if(b.avgB==null||b.avgA==null) return -1;
+      return (a.avgA-a.avgB)-(b.avgA-b.avgB);
+    });
+    kwPopBody.innerHTML = rows.map(r=>{
+      if(r.avgB==null&&r.avgA==null) return `<tr><td>${r.kw}</td><td>-</td><td>-</td><td>-</td></tr>`;
+      const diff = (r.avgB!=null&&r.avgA!=null)? r.avgA-r.avgB : null;
+      const dir = diff!=null? (diff<0?'improve':diff>0?'worsen':'neutral') : 'neutral';
+      const diffTxt = diff!=null? `<span class="${dir}">${diff<0?'':'+'}${diff.toFixed(1)}위${diff<0?' (상승)':diff>0?' (하락)':' (유지)'}</span>` : '-';
+      return `<tr><td>${r.kw}</td><td>${r.avgB!=null?r.avgB.toFixed(1)+'위':'-'}</td><td>${r.avgA!=null?r.avgA.toFixed(1)+'위':'-'}</td><td>${diffTxt}</td></tr>`;
+    }).join('');
+  } else {
+    kwPopTable.style.display='none';
+  }
+
+  // Download compare
+  let dlBefore = allDownloadData.filter(r=>r.date>=bStart&&r.date<=bEnd&&(plat?r.platform===plat:true));
+  let dlAfter = allDownloadData.filter(r=>r.date>=aStart&&r.date<=aEnd&&(plat?r.platform===plat:true));
+  const avgDlB = dlBefore.length? dlBefore.reduce((s,r)=>s+r.downloads,0)/dlBefore.length:null;
+  const avgDlA = dlAfter.length? dlAfter.reduce((s,r)=>s+r.downloads,0)/dlAfter.length:null;
+  const dlD2 = dlDir(avgDlB,avgDlA);
+  document.getElementById('summaryDownloads').innerHTML = avgDlB!=null&&avgDlA!=null
+    ? `<span class="${dlD2.cls}">${fmt(Math.round(avgDlB))}회 <span class="arrow">→</span> ${fmt(Math.round(avgDlA))}회${dlD2.label}</span>` : '-';
+
+  // Category compare
+  let catBefore = allCategoryData.filter(r=>r.date>=bStart&&r.date<=bEnd&&(plat?r.platform===plat:true));
+  let catAfter = allCategoryData.filter(r=>r.date>=aStart&&r.date<=aEnd&&(plat?r.platform===plat:true));
+  const avgCatB = catBefore.length? catBefore.reduce((s,r)=>s+r.rank,0)/catBefore.length:null;
+  const avgCatA = catAfter.length? catAfter.reduce((s,r)=>s+r.rank,0)/catAfter.length:null;
+  const catD = rankDir(avgCatB,avgCatA);
+  document.getElementById('summaryCategory').innerHTML = avgCatB!=null&&avgCatA!=null
+    ? `<span class="${catD.cls}">${fmtRank(avgCatB)} <span class="arrow">→</span> ${fmtRank(avgCatA)}${catD.label}</span>` : '-';
+
+  // ASO 순수 임팩트 (YoY 보정) - Play Store only
+  const psDlAll = allDownloadData.filter(r=>r.platform==='playstore');
+
+  const psBefore26 = psDlAll.filter(r=>r.date>=bStart&&r.date<=bEnd);
+  const psAfter26 = psDlAll.filter(r=>r.date>=aStart&&r.date<=aEnd);
+  const avgB26 = psBefore26.length? psBefore26.reduce((s,r)=>s+r.downloads,0)/psBefore26.length:null;
+  const avgA26 = psAfter26.length? psAfter26.reduce((s,r)=>s+r.downloads,0)/psAfter26.length:null;
+
+  // 2025 동일 MM-DD 기간
+  const psBefore25 = psDlAll.filter(r=>r.date>=('2025-'+bStart.slice(5))&&r.date<=('2025-'+bEnd.slice(5)));
+  const psAfter25 = psDlAll.filter(r=>r.date>=('2025-'+aStart.slice(5))&&r.date<=('2025-'+aEnd.slice(5)));
+  const avgB25 = psBefore25.length? psBefore25.reduce((s,r)=>s+r.downloads,0)/psBefore25.length:null;
+  const avgA25 = psAfter25.length? psAfter25.reduce((s,r)=>s+r.downloads,0)/psAfter25.length:null;
+
+  // CVR compare (Play Store)
+  const psViews = allStoreViewData.filter(r=>r.platform==='playstore');
+  const viewMap = Object.fromEntries(psViews.map(r=>[r.date,r.views]));
+  const dlMap = Object.fromEntries(psDlAll.map(r=>[r.date,r.downloads]));
+  function calcCvr(start,end){
+    let sumDl=0,sumView=0;
+    const d1=new Date(start),d2=new Date(end);
+    for(let dt=new Date(d1);dt<=d2;dt.setDate(dt.getDate()+1)){
+      const k=dt.toISOString().slice(0,10);
+      if(dlMap[k]!=null&&viewMap[k]!=null&&viewMap[k]>0){sumDl+=dlMap[k];sumView+=viewMap[k];}
+    }
+    return sumView>0?(sumDl/sumView*100):null;
+  }
+  const cvrBefore = calcCvr(bStart,bEnd);
+  const cvrAfter = calcCvr(aStart,aEnd);
+  const cvrEl = document.getElementById('summaryCvr');
+  if(cvrBefore!=null&&cvrAfter!=null){
+    const cvrDiff = cvrAfter-cvrBefore;
+    const cls = cvrDiff>0?'improve':cvrDiff<0?'worsen':'neutral';
+    cvrEl.innerHTML = `<span class="${cls}">${cvrBefore.toFixed(1)}% <span class="arrow">→</span> ${cvrAfter.toFixed(1)}% (${cvrDiff>0?'+':''}${cvrDiff.toFixed(1)}%p)</span>`;
+  } else {
+    cvrEl.innerHTML = '-';
+  }
+
+  const impactEl = document.getElementById('summaryAsoImpact');
+  if(avgB26&&avgA26&&avgB25&&avgA25){
+    // YoY 하락률 = Before 기간의 2026/2025 비율
+    const yoyDecline = avgB26 / avgB25;
+    // 기대값 = 2025 After × YoY 하락률 (하락 트렌드 유지 가정)
+    const expected26After = avgA25 * yoyDecline;
+    // ASO 임팩트 = 실제 vs 기대값 차이
+    const impact = (avgA26 - expected26After) / expected26After * 100;
+    const cls = impact>0?'improve':impact<0?'worsen':'neutral';
+    const yoyPct = ((yoyDecline-1)*100).toFixed(1);
+    impactEl.innerHTML = `<span class="${cls}">${impact>0?'+':''}${impact.toFixed(1)}%</span>`
+      +`<br><span style="font-size:.7rem;color:var(--text-muted)">실제 ${Math.round(avgA26)}회/일 vs 기대 ${Math.round(expected26After)}회/일</span>`
+      +`<br><span style="font-size:.65rem;color:var(--text-muted)">YoY 하락률: ${yoyPct>0?'+':''}${yoyPct}%</span>`;
+    document.getElementById('summaryAsoMethod').innerHTML =
+      `<b>추산방식</b> (Play Store 기준)`
+      +`<br>Before: ${before7}~${addDays(d,-1)} / After: ${d}~${after7}`
+      +`<br>① YoY 하락률 = 2026 Before 평균(${Math.round(avgB26)}) / 2025 동기간(${Math.round(avgB25)}) = ${(yoyDecline*100).toFixed(1)}%`
+      +`<br>② 기대값 = 2025 After 동기간(${Math.round(avgA25)}) × 하락률(${(yoyDecline*100).toFixed(1)}%) = ${Math.round(expected26After)}회/일`
+      +`<br>③ ASO 임팩트 = (실제 ${Math.round(avgA26)} − 기대 ${Math.round(expected26After)}) / ${Math.round(expected26After)} = <b>${impact>0?'+':''}${impact.toFixed(1)}%</b>`
+      +`<br><br><span style="color:var(--text-muted)">* "YoY 하락 추세대로라면 ${Math.round(expected26After)}회/일이어야 하는데, 실제 ${Math.round(avgA26)}회/일 → 차이분이 ASO 순수 효과"</span>`;
+  } else {
+    impactEl.innerHTML = '-';
+    document.getElementById('summaryAsoMethod').innerHTML = '';
+  }
+}
+
+// --- Annotation lines for charts ---
+function getAnnoLines(labels){
+  const annos = getAnnotationsForPlatform(platform);
+  return annos.filter(a=>labels.includes(a.date)).map(a=>{
+    const idx = labels.indexOf(a.date);
+    return {
+      type:'line',
+      xMin:idx, xMax:idx,
+      xScaleID:'x',
+      borderColor:'rgba(79,140,255,0.5)',
+      borderWidth:2,
+      borderDash:[6,4],
+      label:{
+        display:true,
+        content:a.label,
+        position:'start',
+        backgroundColor:'rgba(79,140,255,0.8)',
+        color:'#fff',
+        font:{size:10},
+        padding:4
+      }
+    };
+  });
+}
+
+function getAnnoLinesMMDD(mmddLabels){
+  const annos = getAnnotationsForPlatform(platform);
+  return annos.map(a=>{
+    const mmdd = a.date.slice(5); // "2026-03-06" -> "03-06"
+    const idx = mmddLabels.indexOf(mmdd);
+    if(idx===-1) return null;
+    return {
+      type:'line',
+      xMin:idx, xMax:idx,
+      xScaleID:'x',
+      borderColor:'rgba(79,140,255,0.5)',
+      borderWidth:2,
+      borderDash:[6,4],
+      label:{
+        display:true,
+        content:a.label,
+        position:'start',
+        backgroundColor:'rgba(79,140,255,0.8)',
+        color:'#fff',
+        font:{size:10},
+        padding:4
+      }
+    };
+  }).filter(Boolean);
+}
+
+// --- Keyword chart ---
+function buildKeywordToggles(){
+  const container = document.getElementById('keywordToggles');
+  container.innerHTML = '';
+  const keywords = getKeywordsForPlatform(platform);
+  const kwData = filterPlatform(allKeywordData, platform);
+
+  selectedKeywords = new Set(keywords);
+
+  keywords.forEach(kw=>{
+    const lbl = document.createElement('label');
+    lbl.className = selectedKeywords.has(kw)?'checked':'';
+    const cb = document.createElement('input');
+    cb.type='checkbox';
+    cb.checked = selectedKeywords.has(kw);
+    cb.addEventListener('change',()=>{
+      if(cb.checked)selectedKeywords.add(kw); else selectedKeywords.delete(kw);
+      lbl.className = cb.checked?'checked':'';
+      renderKeywordChart();
+    });
+    lbl.appendChild(cb);
+    lbl.appendChild(document.createTextNode(kw));
+    container.appendChild(lbl);
+  });
+}
+
+function renderKeywordChart(){
+  const kwData = filterPlatform(allKeywordData, platform);
+  const dates = [...new Set(kwData.map(d=>d.date))].sort();
+  const datasets = [];
+  let ci=0;
+  selectedKeywords.forEach(kw=>{
+    const kwRows = kwData.filter(d=>d.keyword===kw);
+    const map = Object.fromEntries(kwRows.map(r=>[r.date,r.rank]));
+    datasets.push({
+      label:kw,
+      data:dates.map(d=>map[d]??null),
+      borderColor:COLORS[ci%COLORS.length],
+      backgroundColor:COLORS[ci%COLORS.length]+'33',
+      tension:0.3,
+      pointRadius:2,
+      spanGaps:false
+    });
+    ci++;
+  });
+
+  const cfg = {
+    type:'line',
+    data:{labels:dates,datasets},
+    options:{
+      responsive:true,
+      maintainAspectRatio:false,
+      scales:{
+        y:{reverse:true,min:1,title:{display:true,text:'순위 (낮을수록 좋음)',color:'#888'},ticks:{color:'#888',stepSize:5,callback:v=>Number.isInteger(v)?v:''},grid:{color:'#2a2a2a'}},
+        x:{ticks:{color:'#888',maxTicksLimit:15},grid:{color:'#2a2a2a'}}
+      },
+      interaction:{mode:'index',intersect:false},
+      plugins:{
+        tooltip:{
+          mode:'index',
+          intersect:false,
+          callbacks:{
+            title:ctx=>ctx[0]?.label||'',
+            label:ctx=>ctx.raw!=null?`${ctx.dataset.label}: ${ctx.raw}위`:null
+          }
+        },
+        legend:{labels:{color:'#e8e8e8',usePointStyle:true,pointStyle:'circle'}},
+        annotation:{annotations:Object.fromEntries(getAnnoLines(dates).map((a,i)=>['line'+i,a]))}
+      }
+    }
+  };
+
+  if(keywordChart){keywordChart.destroy()}
+  const ctx = document.getElementById('keywordChart');
+  ctx.parentElement.style.height = '420px';
+  keywordChart = new Chart(ctx, cfg);
+}
+
+// --- Download chart ---
+function renderDownloadChart(){
+  const dlData = allDownloadData;
+  const dates = [...new Set(dlData.map(d=>d.date))].sort();
+  const datasets = [];
+
+  if(platform==='both'){
+    ['ios','playstore'].forEach((p,i)=>{
+      const rows = dlData.filter(d=>d.platform===p);
+      const map = Object.fromEntries(rows.map(r=>[r.date,r.downloads]));
+      datasets.push({
+        label:p==='ios'?'iOS':'Play Store',
+        data:dates.map(d=>map[d]??null),
+        borderColor:COLORS[i],
+        backgroundColor:COLORS[i]+'33',
+        tension:0.3,
+        pointRadius:2,
+        fill:true,
+        spanGaps:true
+      });
+    });
+  } else {
+    const rows = filterPlatform(dlData, platform);
+    const map = Object.fromEntries(rows.map(r=>[r.date,r.downloads]));
+    datasets.push({
+      label:platform==='ios'?'iOS 다운로드':'Play Store 다운로드',
+      data:dates.map(d=>map[d]??null),
+      borderColor:COLORS[0],
+      backgroundColor:COLORS[0]+'33',
+      tension:0.3,
+      pointRadius:2,
+      fill:true,
+      spanGaps:true
+    });
+  }
+
+  const cfg = {
+    type:'line',
+    data:{labels:dates,datasets},
+    options:{
+      responsive:true,
+      maintainAspectRatio:false,
+      scales:{
+        y:{title:{display:true,text:'다운로드 수',color:'#888'},ticks:{color:'#888'},grid:{color:'#2a2a2a'}},
+        x:{ticks:{color:'#888',maxTicksLimit:15},grid:{color:'#2a2a2a'}}
+      },
+      interaction:{mode:'index',intersect:false},
+      plugins:{
+        tooltip:{mode:'index',intersect:false,callbacks:{title:ctx=>ctx[0]?.label||'',label:ctx=>ctx.raw!=null?`${ctx.dataset.label}: ${ctx.raw.toLocaleString('ko-KR')}회`:null}},
+        legend:{labels:{color:'#e8e8e8',usePointStyle:true,pointStyle:'circle'}},
+        annotation:{annotations:Object.fromEntries(getAnnoLines(dates).map((a,i)=>['line'+i,a]))}
+      }
+    }
+  };
+
+  if(downloadChart){downloadChart.destroy()}
+  const ctx = document.getElementById('downloadChart');
+  ctx.parentElement.style.height = '380px';
+  downloadChart = new Chart(ctx, cfg);
+}
+
+// --- Category chart ---
+function renderCategoryChart(){
+  const catData = allCategoryData;
+  const dates = [...new Set(catData.map(d=>d.date))].sort();
+  const datasets = [];
+
+  if(platform==='ios'||platform==='both'){
+    const iphoneRows = catData.filter(d=>d.platform==='ios'&&d.device==='iphone');
+    const ipadRows = catData.filter(d=>d.platform==='ios'&&d.device==='ipad');
+    const mapIphone = Object.fromEntries(iphoneRows.map(r=>[r.date,r.rank]));
+    const mapIpad = Object.fromEntries(ipadRows.map(r=>[r.date,r.rank]));
+    datasets.push({
+      label:'iPhone',
+      data:dates.map(d=>mapIphone[d]??null),
+      borderColor:COLORS[0],
+      tension:0.3,pointRadius:2,spanGaps:false
+    });
+    datasets.push({
+      label:'iPad',
+      data:dates.map(d=>mapIpad[d]??null),
+      borderColor:COLORS[1],
+      tension:0.3,pointRadius:2,spanGaps:false
+    });
+  }
+  if(platform==='playstore'||platform==='both'){
+    const androidRows = catData.filter(d=>d.platform==='playstore'&&d.device==='android');
+    const mapAndroid = Object.fromEntries(androidRows.map(r=>[r.date,r.rank]));
+    datasets.push({
+      label:'Android',
+      data:dates.map(d=>mapAndroid[d]??null),
+      borderColor:COLORS[3],
+      tension:0.3,pointRadius:2,spanGaps:false
+    });
+  }
+
+  const cfg = {
+    type:'line',
+    data:{labels:dates,datasets},
+    options:{
+      responsive:true,
+      maintainAspectRatio:false,
+      scales:{
+        y:{reverse:true,min:1,title:{display:true,text:'카테고리 순위 (낮을수록 좋음)',color:'#888'},ticks:{color:'#888',stepSize:5,callback:v=>Number.isInteger(v)?v:''},grid:{color:'#2a2a2a'}},
+        x:{ticks:{color:'#888',maxTicksLimit:15},grid:{color:'#2a2a2a'}}
+      },
+      interaction:{mode:'index',intersect:false},
+      plugins:{
+        tooltip:{mode:'index',intersect:false,callbacks:{title:ctx=>ctx[0]?.label||'',label:ctx=>ctx.raw!=null?`${ctx.dataset.label}: ${ctx.raw}위`:null}},
+        legend:{labels:{color:'#e8e8e8',usePointStyle:true,pointStyle:'circle'}},
+        annotation:{annotations:Object.fromEntries(getAnnoLines(dates).map((a,i)=>['line'+i,a]))}
+      }
+    }
+  };
+
+  if(categoryChart){categoryChart.destroy()}
+  const ctx = document.getElementById('categoryChart');
+  ctx.parentElement.style.height = '380px';
+  categoryChart = new Chart(ctx, cfg);
+}
+
+// --- YoY Install chart ---
+function renderYoyChart(){
+  const wrap = document.getElementById('yoyChartWrap');
+  const notice = document.getElementById('yoyNotice');
+  if(platform==='ios'){
+    wrap.style.display='none'; notice.style.display='';
+    if(yoyChart){yoyChart.destroy();yoyChart=null;}
+    return;
+  }
+  wrap.style.display=''; notice.style.display='none';
+
+  const psDl = allDownloadData.filter(d=>d.platform==='playstore');
+  const dl2025 = psDl.filter(d=>d.date.startsWith('2025'));
+  const dl2026 = psDl.filter(d=>d.date.startsWith('2026'));
+
+  const map2025 = Object.fromEntries(dl2025.map(r=>[r.date.slice(5),r.downloads]));
+  const map2026 = Object.fromEntries(dl2026.map(r=>[r.date.slice(5),r.downloads]));
+
+  // Only show date range where 2026 data exists
+  const mmdd2026 = Object.keys(map2026).sort();
+  if(!mmdd2026.length){
+    wrap.style.display='none'; notice.style.display='';
+    notice.textContent='데이터 준비중...';
+    if(yoyChart){yoyChart.destroy();yoyChart=null;}
+    return;
+  }
+  const minMM = mmdd2026[0];
+  const maxMM = mmdd2026[mmdd2026.length-1];
+  const allMMDD = [...new Set([...Object.keys(map2025),...Object.keys(map2026)])].sort().filter(d=>d>=minMM&&d<=maxMM);
+
+  const cfg = {
+    type:'line',
+    data:{
+      labels:allMMDD,
+      datasets:[
+        {label:'2025',data:allMMDD.map(d=>map2025[d]??null),borderColor:'#888',backgroundColor:'#88888833',tension:0.3,pointRadius:1,spanGaps:true,borderWidth:1.5},
+        {label:'2026',data:allMMDD.map(d=>map2026[d]??null),borderColor:'#4f8cff',backgroundColor:'#4f8cff33',tension:0.3,pointRadius:2,spanGaps:true,borderWidth:2}
+      ]
+    },
+    options:{
+      responsive:true,maintainAspectRatio:false,
+      scales:{
+        y:{title:{display:true,text:'다운로드 수',color:'#888'},ticks:{color:'#888'},grid:{color:'#2a2a2a'}},
+        x:{ticks:{color:'#888',maxTicksLimit:20},grid:{color:'#2a2a2a'}}
+      },
+      interaction:{mode:'index',intersect:false},
+      plugins:{
+        tooltip:{mode:'index',intersect:false,callbacks:{title:ctx=>ctx[0]?.label||'',label:ctx=>ctx.raw!=null?`${ctx.dataset.label}: ${ctx.raw.toLocaleString('ko-KR')}회`:null}},
+        legend:{labels:{color:'#e8e8e8',usePointStyle:true,pointStyle:'circle'}},
+        annotation:{annotations:Object.fromEntries(getAnnoLinesMMDD(allMMDD).map((a,i)=>['line'+i,a]))}
+      }
+    }
+  };
+
+  if(yoyChart){yoyChart.destroy()}
+  const ctx = document.getElementById('yoyChart');
+  ctx.parentElement.style.height = '380px';
+  yoyChart = new Chart(ctx, cfg);
+}
+
+// --- ASO Impact (YoY adjusted) chart ---
+
+// --- CVR chart ---
+function renderCvrChart(){
+  const wrap = document.getElementById('cvrChartWrap');
+  const notice = document.getElementById('cvrNotice');
+  if(platform==='ios'){
+    wrap.style.display='none'; notice.style.display='';
+    if(cvrChart){cvrChart.destroy();cvrChart=null;}
+    return;
+  }
+  wrap.style.display=''; notice.style.display='none';
+
+  const psViews = allStoreViewData.filter(d=>d.platform==='playstore');
+  if(!psViews.length){
+    wrap.innerHTML='<div style="color:var(--text-muted);padding:20px;text-align:center">데이터 준비중...</div>';
+    if(cvrChart){cvrChart.destroy();cvrChart=null;}
+    return;
+  }
+
+  const psDl = allDownloadData.filter(d=>d.platform==='playstore');
+  const dlMap = Object.fromEntries(psDl.map(r=>[r.date,r.downloads]));
+  const viewMap = Object.fromEntries(psViews.map(r=>[r.date,r.views]));
+
+  const allDates = [...new Set([...Object.keys(dlMap),...Object.keys(viewMap)])].sort();
+
+  // Split by year for YoY overlay
+  const dates2025 = allDates.filter(d=>d.startsWith('2025'));
+  const dates2026 = allDates.filter(d=>d.startsWith('2026'));
+  const has2025 = dates2025.length>0;
+  const has2026 = dates2026.length>0;
+
+  {
+    // Overlay mode - always use MM-DD alignment
+    const cvr2025 = {};
+    dates2025.forEach(d=>{
+      const v = viewMap[d], dl = dlMap[d];
+      if(v&&v>0&&dl!=null) cvr2025[d.slice(5)] = (dl/v)*100;
+    });
+    const cvr2026 = {};
+    dates2026.forEach(d=>{
+      const v = viewMap[d], dl = dlMap[d];
+      if(v&&v>0&&dl!=null) cvr2026[d.slice(5)] = (dl/v)*100;
+    });
+    // Use 2026 date range if available, otherwise 2025 Q1
+    const mmdd2026 = Object.keys(cvr2026).sort();
+    const mmdd2025 = Object.keys(cvr2025).sort();
+    const refDates = mmdd2026.length ? mmdd2026 : mmdd2025.filter(d=>d<='03-31');
+    const minMM = refDates[0] || '01-01';
+    const maxMM = refDates[refDates.length-1] || '03-31';
+    const allMMDD = [...new Set([...Object.keys(cvr2025),...Object.keys(cvr2026)])].sort().filter(d=>d>=minMM&&d<=maxMM);
+
+    const cfg = {
+      type:'line',
+      data:{
+        labels:allMMDD,
+        datasets:[
+          {label:'2025 CVR',data:allMMDD.map(d=>cvr2025[d]!=null?Math.round(cvr2025[d]*100)/100:null),borderColor:'#888',tension:0.3,pointRadius:1,spanGaps:true,borderWidth:1.5},
+          {label:'2026 CVR',data:allMMDD.map(d=>cvr2026[d]!=null?Math.round(cvr2026[d]*100)/100:null),borderColor:'#4f8cff',tension:0.3,pointRadius:2,spanGaps:true,borderWidth:2}
+        ]
+      },
+      options:{
+        responsive:true,maintainAspectRatio:false,
+        scales:{
+          y:{title:{display:true,text:'CVR (%)',color:'#888'},ticks:{color:'#888',callback:v=>v+'%'},grid:{color:'#2a2a2a'}},
+          x:{ticks:{color:'#888',maxTicksLimit:20},grid:{color:'#2a2a2a'}}
+        },
+        interaction:{mode:'index',intersect:false},
+        plugins:{
+          tooltip:{mode:'index',intersect:false,callbacks:{title:ctx=>ctx[0]?.label||'',label:ctx=>ctx.raw!=null?`${ctx.dataset.label}: ${ctx.raw.toFixed(2)}%`:null}},
+          legend:{labels:{color:'#e8e8e8',usePointStyle:true,pointStyle:'circle'}},
+          annotation:{annotations:Object.fromEntries(getAnnoLinesMMDD(allMMDD).map((a,i)=>['line'+i,a]))}
+        }
+      }
+    };
+    if(cvrChart){cvrChart.destroy()}
+    const wrapEl = document.getElementById('cvrChartWrap');
+    if(!document.getElementById('cvrChart')){wrapEl.innerHTML='<canvas id="cvrChart"></canvas>';}
+    const ctx = document.getElementById('cvrChart');
+    ctx.parentElement.style.height = '380px';
+    cvrChart = new Chart(ctx, cfg);
+  }
+}
+
+// --- Annotations table ---
+function renderAnnoTable(){
+  const tbody = document.getElementById('annoBody');
+  if(!allAnnotations.length){
+    tbody.innerHTML = '<tr><td colspan="5" style="color:#888">어노테이션이 없습니다.</td></tr>';
+    return;
+  }
+  tbody.innerHTML = allAnnotations.map(a=>`
+    <tr>
+      <td>${a.date}</td>
+      <td>${a.platform==='ios'?'iOS':a.platform==='playstore'?'Play Store':'Both'}</td>
+      <td>${a.label||''}</td>
+      <td>${a.note||''}</td>
+      <td><button class="btn btn-danger" onclick="deleteAnno(${a.id})" style="padding:4px 10px;font-size:.8rem">삭제</button></td>
+    </tr>
+  `).join('');
+}
+
+async function addAnno(){
+  const date = document.getElementById('annoDate').value;
+  const plat = document.getElementById('annoPlatform').value;
+  const label = document.getElementById('annoLabel').value;
+  const note = document.getElementById('annoNote').value;
+  if(!date||!label){alert('날짜와 라벨을 입력하세요.');return}
+  await sb.from('aso_annotations').insert({date,platform:plat,label,note});
+  document.getElementById('annoDate').value='';
+  document.getElementById('annoLabel').value='';
+  document.getElementById('annoNote').value='';
+  await refreshAnnotations();
+}
+
+async function deleteAnno(id){
+  if(!confirm('정말 삭제하시겠습니까?'))return;
+  await sb.from('aso_annotations').delete().eq('id',id);
+  await refreshAnnotations();
+}
+
+async function refreshAnnotations(){
+  const {data} = await sb.from('aso_annotations').select('*').order('date',{ascending:true});
+  allAnnotations = data||[];
+  renderAnnoTable();
+  renderKeywordChart();
+  renderDownloadChart();
+  renderCategoryChart();
+  renderYoyChart();
+
+  renderCvrChart();
+}
+
+// --- Platform switch ---
+document.getElementById('platformTabs').addEventListener('click',e=>{
+  if(e.target.tagName!=='BUTTON')return;
+  document.querySelectorAll('#platformTabs button').forEach(b=>b.classList.remove('active'));
+  e.target.classList.add('active');
+  platform = e.target.dataset.platform;
+  updateAll();
+});
+
+function updateAll(){
+  updateSummary();
+  const kwSection = document.getElementById('keywordSection');
+  if(platform==='both'){
+    kwSection.style.display='none';
+  } else {
+    kwSection.style.display='';
+    buildKeywordToggles();
+    renderKeywordChart();
+  }
+  renderDownloadChart();
+  renderCategoryChart();
+  renderYoyChart();
+
+  renderCvrChart();
+  renderAnnoTable();
+}
+
+document.getElementById('popCompareBtn').addEventListener('click', updatePopCompare);
+document.getElementById('annoAdd').addEventListener('click', addAnno);
+
+// --- Init ---
+(async()=>{
+  await fetchAll();
+  updateAll();
+})();
+</script>
+</body>
+</html>
