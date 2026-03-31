@@ -155,6 +155,16 @@ if(sessionStorage.getItem('aso_auth')==='1') document.getElementById('lockScreen
   <div class="chart-container" id="storeViewChartWrap"><canvas id="storeViewChart"></canvas></div>
 </div>
 
+<div class="section" id="ratingSection">
+  <h2>일간 평점 현황</h2>
+  <div id="ratingNotice" style="display:none;color:var(--text-muted);padding:20px">Play Store 데이터만 지원</div>
+  <div id="ratingAvgCard" class="card" style="margin-bottom:16px;display:none">
+    <div class="card-label">최근 28일 평균 평점</div>
+    <div class="card-value" id="ratingAvgValue">-</div>
+  </div>
+  <div class="chart-container" id="ratingChartWrap"><canvas id="ratingChart"></canvas></div>
+</div>
+
 <div class="section">
   <h2>어노테이션 관리</h2>
   <div class="card">
@@ -186,8 +196,9 @@ let allDownloadData = [];
 let allCategoryData = [];
 let allAnnotations = [];
 let selectedKeywords = new Set();
-let keywordChart, downloadChart, categoryChart, yoyChart, asoImpactChart, cvrChart, storeViewChart;
+let keywordChart, downloadChart, categoryChart, yoyChart, asoImpactChart, cvrChart, storeViewChart, ratingChart;
 let allStoreViewData = [];
+let allRatingData = [];
 
 const COLORS = ['#4f8cff','#22c55e','#f59e0b','#ef4444','#a855f7','#06b6d4','#ec4899','#84cc16','#f97316','#6366f1',
   '#14b8a6','#e879f9','#facc15','#fb923c','#38bdf8','#c084fc','#4ade80','#f472b6','#a3e635','#2dd4bf'];
@@ -223,12 +234,13 @@ async function fetchAllRows(table){
   return all;
 }
 async function fetchAll(){
-  [allKeywordData, allDownloadData, allCategoryData, allAnnotations, allStoreViewData] = await Promise.all([
+  [allKeywordData, allDownloadData, allCategoryData, allAnnotations, allStoreViewData, allRatingData] = await Promise.all([
     fetchAllRows('aso_keyword_rankings'),
     fetchAllRows('aso_downloads'),
     fetchAllRows('aso_category_rankings'),
     fetchAllRows('aso_annotations'),
     fetchAllRows('aso_store_views'),
+    fetchAllRows('aso_ratings'),
   ]);
 }
 
@@ -890,6 +902,82 @@ function renderStoreViewChart(){
   storeViewChart = new Chart(ctx, cfg);
 }
 
+// --- Rating chart ---
+function renderRatingChart(){
+  const wrap = document.getElementById('ratingChartWrap');
+  const notice = document.getElementById('ratingNotice');
+  const avgCard = document.getElementById('ratingAvgCard');
+  if(platform==='ios'){
+    wrap.style.display='none'; notice.style.display=''; avgCard.style.display='none';
+    if(ratingChart){ratingChart.destroy();ratingChart=null;}
+    return;
+  }
+  wrap.style.display=''; notice.style.display='none'; avgCard.style.display='';
+
+  const psRatings = allRatingData.filter(d=>d.platform==='playstore').sort((a,b)=>a.date.localeCompare(b.date));
+  if(!psRatings.length){
+    wrap.innerHTML='<div style="color:var(--text-muted);padding:20px;text-align:center">데이터 없음</div>';
+    avgCard.style.display='none';
+    return;
+  }
+
+  const dates = psRatings.map(r=>r.date);
+  const dailyAvg = psRatings.map(r=>{
+    const total = r.star5+r.star4+r.star3+r.star2+r.star1;
+    return total>0? (r.star5*5+r.star4*4+r.star3*3+r.star2*2+r.star1*1)/total : null;
+  });
+
+  // 28일 이동평균
+  const ma28 = dailyAvg.map((_,i)=>{
+    const start = Math.max(0,i-27);
+    const slice = dailyAvg.slice(start,i+1).filter(v=>v!=null);
+    return slice.length>=7? slice.reduce((s,v)=>s+v,0)/slice.length : null;
+  });
+
+  // 최근 28일 평균
+  const last28 = psRatings.slice(-28);
+  let totalStars=0, totalCount=0;
+  last28.forEach(r=>{
+    const cnt=r.star5+r.star4+r.star3+r.star2+r.star1;
+    totalStars+=r.star5*5+r.star4*4+r.star3*3+r.star2*2+r.star1*1;
+    totalCount+=cnt;
+  });
+  const avg28 = totalCount>0? totalStars/totalCount : null;
+  document.getElementById('ratingAvgValue').innerHTML = avg28!=null
+    ? `${avg28.toFixed(2)} <span style="font-size:.8rem;color:var(--text-muted)">/ 5.0 (${totalCount}건)</span>` : '-';
+
+  const cfg = {
+    type:'line',
+    data:{
+      labels:dates,
+      datasets:[
+        {label:'일간 평균 평점',data:dailyAvg,borderColor:'#f59e0b',backgroundColor:'#f59e0b33',tension:0.3,pointRadius:2,spanGaps:false,borderWidth:1.5},
+        {label:'28일 이동평균',data:ma28,borderColor:'#4f8cff',tension:0.4,pointRadius:0,spanGaps:true,borderWidth:2.5}
+      ]
+    },
+    options:{
+      responsive:true,maintainAspectRatio:false,
+      scales:{
+        y:{min:1,max:5,title:{display:true,text:'평점',color:'#888'},ticks:{color:'#888',stepSize:0.5},grid:{color:'#2a2a2a'}},
+        x:{ticks:{color:'#888',maxTicksLimit:15},grid:{color:'#2a2a2a'}}
+      },
+      interaction:{mode:'index',intersect:false},
+      plugins:{
+        tooltip:{mode:'index',intersect:false,callbacks:{title:ctx=>ctx[0]?.label||'',label:ctx=>ctx.raw!=null?`${ctx.dataset.label}: ${ctx.raw.toFixed(2)}`:null}},
+        legend:{labels:{color:'#e8e8e8',usePointStyle:true,pointStyle:'circle'}},
+        annotation:{annotations:Object.fromEntries(getAnnoLines(dates).map((a,i)=>['line'+i,a]))}
+      }
+    }
+  };
+
+  if(ratingChart){ratingChart.destroy()}
+  const wrapEl = document.getElementById('ratingChartWrap');
+  if(!document.getElementById('ratingChart')){wrapEl.innerHTML='<canvas id="ratingChart"></canvas>';}
+  const ctx = document.getElementById('ratingChart');
+  ctx.parentElement.style.height = '380px';
+  ratingChart = new Chart(ctx, cfg);
+}
+
 // --- Annotations table ---
 function renderAnnoTable(){
   const tbody = document.getElementById('annoBody');
@@ -938,6 +1026,7 @@ async function refreshAnnotations(){
 
   renderCvrChart();
   renderStoreViewChart();
+  renderRatingChart();
 }
 
 // --- Platform switch ---
