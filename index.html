@@ -109,7 +109,7 @@ if(sessionStorage.getItem('aso_auth')==='1') document.getElementById('lockScreen
     <div class="card"><div class="card-label">일 다운로드</div><div class="card-value" id="summaryDownloads">-</div></div>
     <div class="card"><div class="card-label">교육 카테고리 순위</div><div class="card-value" id="summaryCategory">-</div></div>
     <div class="card"><div class="card-label">스토어 CVR</div><div class="card-value" id="summaryCvr">-</div></div>
-    <div class="card"><div class="card-label">ASO 순수 임팩트 (YoY 보정)</div><div class="card-value" id="summaryAsoImpact">-</div><div id="summaryAsoMethod" style="font-size:.65rem;color:var(--text-muted);margin-top:8px;line-height:1.5;border-top:1px solid var(--border);padding-top:8px"></div></div>
+    <div class="card"><div class="card-label">ASO 순수 임팩트 (PoP 비교)</div><div class="card-value" id="summaryAsoImpact">-</div><div id="summaryAsoMethod" style="font-size:.65rem;color:var(--text-muted);margin-top:8px;line-height:1.5;border-top:1px solid var(--border);padding-top:8px"></div></div>
   </div>
 </div>
 
@@ -118,10 +118,17 @@ if(sessionStorage.getItem('aso_auth')==='1') document.getElementById('lockScreen
   <div class="keyword-toggles" id="keywordToggles"></div>
   <div class="chart-container"><canvas id="keywordChart"></canvas></div>
   <div class="card" id="keywordPopTable" style="margin-top:16px;display:none">
-    <h3 style="font-size:.95rem;margin-bottom:12px">키워드별 PoP 순위 비교</h3>
+    <h3 style="font-size:.95rem;margin-bottom:12px">키워드별 PoP 비교</h3>
     <table style="width:100%">
-      <thead><tr><th>키워드</th><th>Before 평균</th><th>After 평균</th><th>변화</th></tr></thead>
+      <thead><tr><th>키워드</th><th>Before 순위</th><th>After 순위</th><th>순위 변화</th><th>Before 설치</th><th>After 설치</th><th>설치 변화</th></tr></thead>
       <tbody id="keywordPopBody"></tbody>
+    </table>
+  </div>
+  <div class="card" id="kwWeeklyTable" style="margin-top:16px;display:none;overflow-x:auto">
+    <h3 style="font-size:.95rem;margin-bottom:12px">주차별 키워드 다운로드</h3>
+    <table style="width:100%;white-space:nowrap">
+      <thead id="kwWeeklyHead"></thead>
+      <tbody id="kwWeeklyBody"></tbody>
     </table>
   </div>
 </div>
@@ -199,6 +206,7 @@ let selectedKeywords = new Set();
 let keywordChart, downloadChart, categoryChart, yoyChart, asoImpactChart, cvrChart, storeViewChart, ratingChart;
 let allStoreViewData = [];
 let allRatingData = [];
+let allKwInstallData = [];
 
 const COLORS = ['#4f8cff','#22c55e','#f59e0b','#ef4444','#a855f7','#06b6d4','#ec4899','#84cc16','#f97316','#6366f1',
   '#14b8a6','#e879f9','#facc15','#fb923c','#38bdf8','#c084fc','#4ade80','#f472b6','#a3e635','#2dd4bf'];
@@ -222,10 +230,10 @@ function dateStr(d){return new Date(d).toISOString().slice(0,10)}
 function addDays(d,n){const r=new Date(d);r.setDate(r.getDate()+n);return dateStr(r)}
 
 // --- Data fetching ---
-async function fetchAllRows(table){
+async function fetchAllRows(table, orderCol='date'){
   let all=[], from=0, pageSize=1000;
   while(true){
-    const {data,error}=await sb.from(table).select('*').order('date',{ascending:true}).range(from,from+pageSize-1);
+    const {data,error}=await sb.from(table).select('*').order(orderCol,{ascending:true}).range(from,from+pageSize-1);
     if(error)break;
     all=all.concat(data||[]);
     if(!data||data.length<pageSize)break;
@@ -234,13 +242,14 @@ async function fetchAllRows(table){
   return all;
 }
 async function fetchAll(){
-  [allKeywordData, allDownloadData, allCategoryData, allAnnotations, allStoreViewData, allRatingData] = await Promise.all([
+  [allKeywordData, allDownloadData, allCategoryData, allAnnotations, allStoreViewData, allRatingData, allKwInstallData] = await Promise.all([
     fetchAllRows('aso_keyword_rankings'),
     fetchAllRows('aso_downloads'),
     fetchAllRows('aso_category_rankings'),
     fetchAllRows('aso_annotations'),
     fetchAllRows('aso_store_views'),
     fetchAllRows('aso_ratings'),
+    fetchAllRows('aso_keyword_installs','week_start'),
   ]);
 }
 
@@ -270,41 +279,98 @@ function updateSummary(){
   const dlDates = [...new Set(dlData.map(d=>d.date))].sort();
   const catDates = [...new Set(catData.map(d=>d.date))].sort();
 
-  // Keyword avg
-  const latestKwDate = kwDates[kwDates.length-1];
-  const weekAgoKwDate = kwDates.find(d=>d<=addDays(latestKwDate,-7))||kwDates[Math.max(0,kwDates.length-8)];
-  const latestKw = kwData.filter(d=>d.date===latestKwDate);
-  const weekAgoKw = kwData.filter(d=>d.date===weekAgoKwDate);
-  const avgLatestKw = latestKw.length? latestKw.reduce((s,d)=>s+d.rank,0)/latestKw.length : null;
-  const avgWeekAgoKw = weekAgoKw.length? weekAgoKw.reduce((s,d)=>s+d.rank,0)/weekAgoKw.length : null;
-  const kwDir = rankDir(avgWeekAgoKw, avgLatestKw);
-  document.getElementById('summaryKeyword').innerHTML = avgWeekAgoKw!=null&&avgLatestKw!=null
-    ? `<span class="${kwDir.cls}">${fmtRank(avgWeekAgoKw)} <span class="arrow">→</span> ${fmtRank(avgLatestKw)}${kwDir.label}</span>`
-    : '-';
+  if(platform==='both'){
+    // Both: 플랫폼별로 각각 표시
+    const iosKwData = allKeywordData.filter(d=>d.platform==='ios');
+    const psKwData = allKeywordData.filter(d=>d.platform==='playstore');
+    const iosKwDates = [...new Set(iosKwData.map(d=>d.date))].sort();
+    const psKwDates = [...new Set(psKwData.map(d=>d.date))].sort();
 
-  // Downloads
-  const latestDlDate = dlDates[dlDates.length-1];
-  const weekAgoDlDate = dlDates.find(d=>d<=addDays(latestDlDate,-7))||dlDates[Math.max(0,dlDates.length-8)];
-  const latestDl = dlData.filter(d=>d.date===latestDlDate);
-  const weekAgoDl = dlData.filter(d=>d.date===weekAgoDlDate);
-  const sumLatestDl = latestDl.reduce((s,d)=>s+d.downloads,0);
-  const sumWeekAgoDl = weekAgoDl.reduce((s,d)=>s+d.downloads,0);
-  const dlD = dlDir(sumWeekAgoDl, sumLatestDl);
-  document.getElementById('summaryDownloads').innerHTML = sumWeekAgoDl||sumLatestDl
-    ? `<span class="${dlD.cls}">${fmt(sumWeekAgoDl)}회 <span class="arrow">→</span> ${fmt(sumLatestDl)}회${dlD.label}</span>`
-    : '-';
+    function kwAvgBoth(rows, date, kws){
+      const map = Object.fromEntries(rows.filter(d=>d.date===date).map(d=>[d.keyword,d.rank]));
+      const vals = kws.map(kw=>map[kw]??200);
+      return vals.length? vals.reduce((s,v)=>s+v,0)/vals.length : null;
+    }
+    const iosLatest = kwAvgBoth(iosKwData, iosKwDates[iosKwDates.length-1], IOS_KEYWORDS);
+    const iosWeekAgo = kwAvgBoth(iosKwData, iosKwDates.find(d=>d<=addDays(iosKwDates[iosKwDates.length-1],-7))||iosKwDates[Math.max(0,iosKwDates.length-8)], IOS_KEYWORDS);
+    const psLatest = kwAvgBoth(psKwData, psKwDates[psKwDates.length-1], PS_KEYWORDS);
+    const psWeekAgo = kwAvgBoth(psKwData, psKwDates.find(d=>d<=addDays(psKwDates[psKwDates.length-1],-7))||psKwDates[Math.max(0,psKwDates.length-8)], PS_KEYWORDS);
+    const iosDir = rankDir(iosWeekAgo, iosLatest);
+    const psDir2 = rankDir(psWeekAgo, psLatest);
+    document.getElementById('summaryKeyword').innerHTML =
+      `<span style="font-size:.75rem">iOS: <span class="${iosDir.cls}">${fmtRank(iosWeekAgo)} → ${fmtRank(iosLatest)}</span></span>`
+      +`<br><span style="font-size:.75rem">PS: <span class="${psDir2.cls}">${fmtRank(psWeekAgo)} → ${fmtRank(psLatest)}</span></span>`;
 
-  // Category
-  const latestCatDate = catDates[catDates.length-1];
-  const weekAgoCatDate = catDates.find(d=>d<=addDays(latestCatDate,-7))||catDates[Math.max(0,catDates.length-8)];
-  const latestCat = catData.filter(d=>d.date===latestCatDate);
-  const weekAgoCat = catData.filter(d=>d.date===weekAgoCatDate);
-  const avgLatestCat = latestCat.length? latestCat.reduce((s,d)=>s+d.rank,0)/latestCat.length : null;
-  const avgWeekAgoCat = weekAgoCat.length? weekAgoCat.reduce((s,d)=>s+d.rank,0)/weekAgoCat.length : null;
-  const catDir = rankDir(avgWeekAgoCat, avgLatestCat);
-  document.getElementById('summaryCategory').innerHTML = avgWeekAgoCat!=null&&avgLatestCat!=null
-    ? `<span class="${catDir.cls}">${fmtRank(avgWeekAgoCat)} <span class="arrow">→</span> ${fmtRank(avgLatestCat)}${catDir.label}</span>`
-    : '-';
+    // Downloads: 플랫폼별 표시
+    const iosDl = allDownloadData.filter(d=>d.platform==='ios');
+    const psDl = allDownloadData.filter(d=>d.platform==='playstore');
+    const iosDlDates = [...new Set(iosDl.map(d=>d.date))].sort();
+    const psDlDates = [...new Set(psDl.map(d=>d.date))].sort();
+    const iosLatestDl = iosDl.find(d=>d.date===iosDlDates[iosDlDates.length-1])?.downloads||0;
+    const iosWeekDl = iosDl.find(d=>d.date===(iosDlDates.find(d2=>d2<=addDays(iosDlDates[iosDlDates.length-1],-7))||iosDlDates[Math.max(0,iosDlDates.length-8)]))?.downloads||0;
+    const psLatestDl = psDl.find(d=>d.date===psDlDates[psDlDates.length-1])?.downloads||0;
+    const psWeekDl = psDl.find(d=>d.date===(psDlDates.find(d2=>d2<=addDays(psDlDates[psDlDates.length-1],-7))||psDlDates[Math.max(0,psDlDates.length-8)]))?.downloads||0;
+    const iosDlDir = dlDir(iosWeekDl, iosLatestDl);
+    const psDlDir = dlDir(psWeekDl, psLatestDl);
+    document.getElementById('summaryDownloads').innerHTML =
+      `<span style="font-size:.75rem">iOS: <span class="${iosDlDir.cls}">${fmt(iosWeekDl)} → ${fmt(iosLatestDl)}회</span></span>`
+      +`<br><span style="font-size:.75rem">PS: <span class="${psDlDir.cls}">${fmt(psWeekDl)} → ${fmt(psLatestDl)}회</span></span>`;
+
+    // Category: 플랫폼별 표시
+    const iosCat = allCategoryData.filter(d=>d.platform==='ios'&&d.device==='iphone');
+    const psCat = allCategoryData.filter(d=>d.platform==='playstore');
+    const iosCatDates = [...new Set(iosCat.map(d=>d.date))].sort();
+    const psCatDates = [...new Set(psCat.map(d=>d.date))].sort();
+    const iosLatestCat = iosCat.find(d=>d.date===iosCatDates[iosCatDates.length-1])?.rank;
+    const iosWeekCat = iosCat.find(d=>d.date===(iosCatDates.find(d2=>d2<=addDays(iosCatDates[iosCatDates.length-1],-7))||iosCatDates[Math.max(0,iosCatDates.length-8)]))?.rank;
+    const psLatestCat = psCat.find(d=>d.date===psCatDates[psCatDates.length-1])?.rank;
+    const psWeekCat = psCat.find(d=>d.date===(psCatDates.find(d2=>d2<=addDays(psCatDates[psCatDates.length-1],-7))||psCatDates[Math.max(0,psCatDates.length-8)]))?.rank;
+    const iosCatDir = rankDir(iosWeekCat, iosLatestCat);
+    const psCatDir = rankDir(psWeekCat, psLatestCat);
+    document.getElementById('summaryCategory').innerHTML =
+      `<span style="font-size:.75rem">iOS: <span class="${iosCatDir.cls}">${fmtRank(iosWeekCat)} → ${fmtRank(iosLatestCat)}</span></span>`
+      +`<br><span style="font-size:.75rem">PS: <span class="${psCatDir.cls}">${fmtRank(psWeekCat)} → ${fmtRank(psLatestCat)}</span></span>`;
+  } else {
+    // Single platform
+    const allKws = getKeywordsForPlatform(platform);
+    function kwAvgWithDefault(rows, date){
+      const map = Object.fromEntries(rows.filter(d=>d.date===date).map(d=>[d.keyword,d.rank]));
+      const vals = allKws.map(kw=>map[kw]??200);
+      return vals.length? vals.reduce((s,v)=>s+v,0)/vals.length : null;
+    }
+    const latestKwDate = kwDates[kwDates.length-1];
+    const weekAgoKwDate = kwDates.find(d=>d<=addDays(latestKwDate,-7))||kwDates[Math.max(0,kwDates.length-8)];
+    const avgLatestKw = kwAvgWithDefault(kwData, latestKwDate);
+    const avgWeekAgoKw = kwAvgWithDefault(kwData, weekAgoKwDate);
+    const kwDir = rankDir(avgWeekAgoKw, avgLatestKw);
+    document.getElementById('summaryKeyword').innerHTML = avgWeekAgoKw!=null&&avgLatestKw!=null
+      ? `<span class="${kwDir.cls}">${fmtRank(avgWeekAgoKw)} <span class="arrow">→</span> ${fmtRank(avgLatestKw)}${kwDir.label}</span>`
+      : '-';
+
+    // Downloads
+    const latestDlDate = dlDates[dlDates.length-1];
+    const weekAgoDlDate = dlDates.find(d=>d<=addDays(latestDlDate,-7))||dlDates[Math.max(0,dlDates.length-8)];
+    const latestDl = dlData.filter(d=>d.date===latestDlDate);
+    const weekAgoDl = dlData.filter(d=>d.date===weekAgoDlDate);
+    const sumLatestDl = latestDl.reduce((s,d)=>s+d.downloads,0);
+    const sumWeekAgoDl = weekAgoDl.reduce((s,d)=>s+d.downloads,0);
+    const dlD = dlDir(sumWeekAgoDl, sumLatestDl);
+    document.getElementById('summaryDownloads').innerHTML = sumWeekAgoDl||sumLatestDl
+      ? `<span class="${dlD.cls}">${fmt(sumWeekAgoDl)}회 <span class="arrow">→</span> ${fmt(sumLatestDl)}회${dlD.label}</span>`
+      : '-';
+
+    // Category
+    const latestCatDate = catDates[catDates.length-1];
+    const weekAgoCatDate = catDates.find(d=>d<=addDays(latestCatDate,-7))||catDates[Math.max(0,catDates.length-8)];
+    const latestCat = catData.filter(d=>d.date===latestCatDate);
+    const weekAgoCat = catData.filter(d=>d.date===weekAgoCatDate);
+    const avgLatestCat = latestCat.length? latestCat.reduce((s,d)=>s+d.rank,0)/latestCat.length : null;
+    const avgWeekAgoCat = weekAgoCat.length? weekAgoCat.reduce((s,d)=>s+d.rank,0)/weekAgoCat.length : null;
+    const catDir = rankDir(avgWeekAgoCat, avgLatestCat);
+    document.getElementById('summaryCategory').innerHTML = avgWeekAgoCat!=null&&avgLatestCat!=null
+      ? `<span class="${catDir.cls}">${fmtRank(avgWeekAgoCat)} <span class="arrow">→</span> ${fmtRank(avgLatestCat)}${catDir.label}</span>`
+      : '-';
+  }
 
   document.getElementById('summaryCvr').innerHTML = '<span style="color:var(--text-muted)">기간을 선택하세요</span>';
   document.getElementById('summaryAsoImpact').innerHTML = '<span style="color:var(--text-muted)">기간을 선택하세요</span>';
@@ -320,6 +386,7 @@ function updatePopCompare(){
   if(!aStart||!aEnd){
     periodLabel.textContent = '';
     document.getElementById('keywordPopTable').style.display='none';
+    document.getElementById('kwWeeklyTable').style.display='none';
     updateSummary();
     return;
   }
@@ -332,14 +399,40 @@ function updatePopCompare(){
 
   const plat = platform==='both'?null:platform;
 
-  // Keyword compare
+  // Keyword compare (공란=200위로 계산)
+  function kwAvgPeriod(rows, keywords){
+    const dates = [...new Set(rows.map(r=>r.date))];
+    if(!dates.length||!keywords.length) return null;
+    let sum=0, cnt=0;
+    dates.forEach(d=>{
+      const map = Object.fromEntries(rows.filter(r=>r.date===d).map(r=>[r.keyword,r.rank]));
+      keywords.forEach(kw=>{ sum += map[kw]??200; cnt++; });
+    });
+    return cnt>0? sum/cnt : null;
+  }
   let kwBefore = allKeywordData.filter(r=>r.date>=bStart&&r.date<=bEnd&&(plat?r.platform===plat:true));
   let kwAfter = allKeywordData.filter(r=>r.date>=aStart&&r.date<=aEnd&&(plat?r.platform===plat:true));
-  const avgKwB = kwBefore.length? kwBefore.reduce((s,r)=>s+r.rank,0)/kwBefore.length:null;
-  const avgKwA = kwAfter.length? kwAfter.reduce((s,r)=>s+r.rank,0)/kwAfter.length:null;
-  const kwD = rankDir(avgKwB,avgKwA);
-  document.getElementById('summaryKeyword').innerHTML = avgKwB!=null&&avgKwA!=null
-    ? `<span class="${kwD.cls}">${fmtRank(avgKwB)} <span class="arrow">→</span> ${fmtRank(avgKwA)}${kwD.label}</span>` : '-';
+
+  if(platform==='both'){
+    // Both: 플랫폼별 각각 표시
+    const iosKwB = allKeywordData.filter(r=>r.date>=bStart&&r.date<=bEnd&&r.platform==='ios');
+    const iosKwA = allKeywordData.filter(r=>r.date>=aStart&&r.date<=aEnd&&r.platform==='ios');
+    const psKwB = allKeywordData.filter(r=>r.date>=bStart&&r.date<=bEnd&&r.platform==='playstore');
+    const psKwA = allKeywordData.filter(r=>r.date>=aStart&&r.date<=aEnd&&r.platform==='playstore');
+    const iosAvgB = kwAvgPeriod(iosKwB, IOS_KEYWORDS), iosAvgA = kwAvgPeriod(iosKwA, IOS_KEYWORDS);
+    const psAvgB = kwAvgPeriod(psKwB, PS_KEYWORDS), psAvgA = kwAvgPeriod(psKwA, PS_KEYWORDS);
+    const iosD = rankDir(iosAvgB,iosAvgA), psD = rankDir(psAvgB,psAvgA);
+    document.getElementById('summaryKeyword').innerHTML =
+      `<span style="font-size:.75rem">iOS: <span class="${iosD.cls}">${fmtRank(iosAvgB)} → ${fmtRank(iosAvgA)}${iosD.label}</span></span>`
+      +`<br><span style="font-size:.75rem">PS: <span class="${psD.cls}">${fmtRank(psAvgB)} → ${fmtRank(psAvgA)}${psD.label}</span></span>`;
+  } else {
+    const popKws = getKeywordsForPlatform(platform);
+    const avgKwB = kwAvgPeriod(kwBefore, popKws);
+    const avgKwA = kwAvgPeriod(kwAfter, popKws);
+    const kwD = rankDir(avgKwB,avgKwA);
+    document.getElementById('summaryKeyword').innerHTML = avgKwB!=null&&avgKwA!=null
+      ? `<span class="${kwD.cls}">${fmtRank(avgKwB)} <span class="arrow">→</span> ${fmtRank(avgKwA)}${kwD.label}</span>` : '-';
+  }
 
   // Keyword PoP table
   const kwPopTable = document.getElementById('keywordPopTable');
@@ -348,49 +441,122 @@ function updatePopCompare(){
     kwPopTable.style.display='';
     const keywords = getKeywordsForPlatform(platform);
     const rows = [];
+    const bDates = [...new Set(kwBefore.map(r=>r.date))];
+    const aDates = [...new Set(kwAfter.map(r=>r.date))];
     keywords.forEach(kw=>{
       const bRows = kwBefore.filter(r=>r.keyword===kw);
       const aRows = kwAfter.filter(r=>r.keyword===kw);
-      const avgB = bRows.length? bRows.reduce((s,r)=>s+r.rank,0)/bRows.length : null;
-      const avgA = aRows.length? aRows.reduce((s,r)=>s+r.rank,0)/aRows.length : null;
-      rows.push({kw, avgB, avgA});
+      const bMap = Object.fromEntries(bRows.map(r=>[r.date,r.rank]));
+      const aMap = Object.fromEntries(aRows.map(r=>[r.date,r.rank]));
+      // 공란=200으로 계산, 표시는 원래 값 기준
+      const avgB = bDates.length? bDates.reduce((s,d)=>s+(bMap[d]??200),0)/bDates.length : null;
+      const avgA = aDates.length? aDates.reduce((s,d)=>s+(aMap[d]??200),0)/aDates.length : null;
+      // 실제 데이터 있는 값의 평균 (표시용)
+      const dispB = bRows.length? bRows.reduce((s,r)=>s+r.rank,0)/bRows.length : null;
+      const dispA = aRows.length? aRows.reduce((s,r)=>s+r.rank,0)/aRows.length : null;
+      // Keyword install data (weekly, match weeks overlapping the period)
+      const kwInstPlatform = allKwInstallData.filter(r=>r.platform===platform);
+      const bInstRows = kwInstPlatform.filter(r=>r.keyword===kw&&r.week_start>=bStart&&r.week_start<=bEnd);
+      const aInstRows = kwInstPlatform.filter(r=>r.keyword===kw&&r.week_start>=aStart&&r.week_start<=aEnd);
+      const sumInstB = bInstRows.reduce((s,r)=>s+r.installs,0);
+      const sumInstA = aInstRows.reduce((s,r)=>s+r.installs,0);
+      rows.push({kw, avgB, avgA, dispB, dispA, sumInstB, sumInstA});
     });
-    // Sort by improvement (biggest rank drop first)
-    rows.sort((a,b)=>{
-      if(a.avgB==null||a.avgA==null) return 1;
-      if(b.avgB==null||b.avgA==null) return -1;
-      return (a.avgA-a.avgB)-(b.avgA-b.avgB);
-    });
+    // Sort by install change (biggest increase first)
+    rows.sort((a,b)=>(b.sumInstA-b.sumInstB)-(a.sumInstA-a.sumInstB));
     kwPopBody.innerHTML = rows.map(r=>{
-      if(r.avgB==null&&r.avgA==null) return `<tr><td>${r.kw}</td><td>-</td><td>-</td><td>-</td></tr>`;
-      const diff = (r.avgB!=null&&r.avgA!=null)? r.avgA-r.avgB : null;
-      const dir = diff!=null? (diff<0?'improve':diff>0?'worsen':'neutral') : 'neutral';
-      const diffTxt = diff!=null? `<span class="${dir}">${diff<0?'':'+'}${diff.toFixed(1)}위${diff<0?' (상승)':diff>0?' (하락)':' (유지)'}</span>` : '-';
-      return `<tr><td>${r.kw}</td><td>${r.avgB!=null?r.avgB.toFixed(1)+'위':'-'}</td><td>${r.avgA!=null?r.avgA.toFixed(1)+'위':'-'}</td><td>${diffTxt}</td></tr>`;
+      const rankDiff = (r.avgB!=null&&r.avgA!=null)? r.avgA-r.avgB : null;
+      const rankDir = rankDiff!=null? (rankDiff<0?'improve':rankDiff>0?'worsen':'neutral') : 'neutral';
+      const rankTxt = rankDiff!=null? `<span class="${rankDir}">${rankDiff<0?'▲':'▼'} ${Math.abs(rankDiff).toFixed(1)}위</span>` : '-';
+      const instDiff = r.sumInstA - r.sumInstB;
+      const instPct = r.sumInstB>0? (instDiff/r.sumInstB*100) : (r.sumInstA>0?100:0);
+      const instDir = instDiff>0?'improve':instDiff<0?'worsen':'neutral';
+      const arrow = instDiff>0?'▲':instDiff<0?'▼':'';
+      const instTxt = `<span class="${instDir}">${arrow} ${Math.abs(instDiff)}건${r.sumInstB>0?' ('+(instPct>0?'+':'')+instPct.toFixed(0)+'%)':instDiff>0?' (신규)':''}</span>`;
+      // 표시: 실제 데이터가 있으면 실제 평균, 없으면 "-" (계산은 200 포함)
+      const dispBTxt = r.dispB!=null? r.dispB.toFixed(1)+'위' : '-';
+      const dispATxt = r.dispA!=null? r.dispA.toFixed(1)+'위' : '-';
+      return `<tr><td>${r.kw}</td><td>${dispBTxt}</td><td>${dispATxt}</td><td>${rankTxt}</td><td>${r.sumInstB}건</td><td>${r.sumInstA}건</td><td>${instTxt}</td></tr>`;
     }).join('');
+    // Weekly keyword download table
+    const kwWeeklyTable = document.getElementById('kwWeeklyTable');
+    const kwInstAll = allKwInstallData.filter(r=>r.platform===platform);
+    const allWeeks = [...new Set(kwInstAll.map(r=>r.week_start))].sort();
+    if(allWeeks.length){
+      kwWeeklyTable.style.display='';
+      const allKws = [...new Set(kwInstAll.map(r=>r.keyword))];
+      // Header
+      const weekLabels = allWeeks.map(w=>{const e=new Date(w);e.setDate(e.getDate()+6);return w.slice(5)+'~'+e.toISOString().slice(5,10)});
+      document.getElementById('kwWeeklyHead').innerHTML = '<tr><th>키워드</th>'+weekLabels.map(w=>'<th>'+w+'</th>').join('')+'<th>합계</th></tr>';
+      // Body
+      const weekTotals = allWeeks.map(()=>0);
+      let grandTotal = 0;
+      const bodyRows = allKws.map(kw=>{
+        const kwRows = kwInstAll.filter(r=>r.keyword===kw);
+        const map = Object.fromEntries(kwRows.map(r=>[r.week_start,r.installs]));
+        let kwSum = 0;
+        const cells = allWeeks.map((w,i)=>{
+          const v = map[w];
+          if(v!=null){kwSum+=v; weekTotals[i]+=v; grandTotal+=v;}
+          return '<td>'+(v!=null?v:'-')+'</td>';
+        }).join('');
+        return '<tr><td>'+kw+'</td>'+cells+'<td><b>'+kwSum+'</b></td></tr>';
+      }).join('');
+      const totalRow = '<tr style="border-top:2px solid var(--border)"><td><b>합계</b></td>'+weekTotals.map(t=>'<td><b>'+t+'</b></td>').join('')+'<td><b>'+grandTotal+'</b></td></tr>';
+      document.getElementById('kwWeeklyBody').innerHTML = bodyRows + totalRow;
+    } else {
+      kwWeeklyTable.style.display='none';
+    }
   } else {
     kwPopTable.style.display='none';
+    document.getElementById('kwWeeklyTable').style.display='none';
   }
 
   // Download compare
-  let dlBefore = allDownloadData.filter(r=>r.date>=bStart&&r.date<=bEnd&&(plat?r.platform===plat:true));
-  let dlAfter = allDownloadData.filter(r=>r.date>=aStart&&r.date<=aEnd&&(plat?r.platform===plat:true));
-  const avgDlB = dlBefore.length? dlBefore.reduce((s,r)=>s+r.downloads,0)/dlBefore.length:null;
-  const avgDlA = dlAfter.length? dlAfter.reduce((s,r)=>s+r.downloads,0)/dlAfter.length:null;
-  const dlD2 = dlDir(avgDlB,avgDlA);
-  document.getElementById('summaryDownloads').innerHTML = avgDlB!=null&&avgDlA!=null
-    ? `<span class="${dlD2.cls}">${fmt(Math.round(avgDlB))}회 <span class="arrow">→</span> ${fmt(Math.round(avgDlA))}회${dlD2.label}</span>` : '-';
+  if(platform==='both'){
+    function dlPopPlatform(p){
+      const b=allDownloadData.filter(r=>r.date>=bStart&&r.date<=bEnd&&r.platform===p);
+      const a=allDownloadData.filter(r=>r.date>=aStart&&r.date<=aEnd&&r.platform===p);
+      return {avgB:b.length?b.reduce((s,r)=>s+r.downloads,0)/b.length:null, avgA:a.length?a.reduce((s,r)=>s+r.downloads,0)/a.length:null};
+    }
+    const iosDlPop=dlPopPlatform('ios'), psDlPop=dlPopPlatform('playstore');
+    const iosDlD=dlDir(iosDlPop.avgB,iosDlPop.avgA), psDlD=dlDir(psDlPop.avgB,psDlPop.avgA);
+    document.getElementById('summaryDownloads').innerHTML =
+      `<span style="font-size:.75rem">iOS: <span class="${iosDlD.cls}">${iosDlPop.avgB!=null?fmt(Math.round(iosDlPop.avgB)):'-'} → ${iosDlPop.avgA!=null?fmt(Math.round(iosDlPop.avgA))+'회':'-'}${iosDlD.label}</span></span>`
+      +`<br><span style="font-size:.75rem">PS: <span class="${psDlD.cls}">${psDlPop.avgB!=null?fmt(Math.round(psDlPop.avgB)):'-'} → ${psDlPop.avgA!=null?fmt(Math.round(psDlPop.avgA))+'회':'-'}${psDlD.label}</span></span>`;
+  } else {
+    let dlBefore = allDownloadData.filter(r=>r.date>=bStart&&r.date<=bEnd&&r.platform===platform);
+    let dlAfter = allDownloadData.filter(r=>r.date>=aStart&&r.date<=aEnd&&r.platform===platform);
+    const avgDlB = dlBefore.length? dlBefore.reduce((s,r)=>s+r.downloads,0)/dlBefore.length:null;
+    const avgDlA = dlAfter.length? dlAfter.reduce((s,r)=>s+r.downloads,0)/dlAfter.length:null;
+    const dlD2 = dlDir(avgDlB,avgDlA);
+    document.getElementById('summaryDownloads').innerHTML = avgDlB!=null&&avgDlA!=null
+      ? `<span class="${dlD2.cls}">${fmt(Math.round(avgDlB))}회 <span class="arrow">→</span> ${fmt(Math.round(avgDlA))}회${dlD2.label}</span>` : '-';
+  }
 
   // Category compare
-  let catBefore = allCategoryData.filter(r=>r.date>=bStart&&r.date<=bEnd&&(plat?r.platform===plat:true));
-  let catAfter = allCategoryData.filter(r=>r.date>=aStart&&r.date<=aEnd&&(plat?r.platform===plat:true));
-  const avgCatB = catBefore.length? catBefore.reduce((s,r)=>s+r.rank,0)/catBefore.length:null;
-  const avgCatA = catAfter.length? catAfter.reduce((s,r)=>s+r.rank,0)/catAfter.length:null;
-  const catD = rankDir(avgCatB,avgCatA);
-  document.getElementById('summaryCategory').innerHTML = avgCatB!=null&&avgCatA!=null
-    ? `<span class="${catD.cls}">${fmtRank(avgCatB)} <span class="arrow">→</span> ${fmtRank(avgCatA)}${catD.label}</span>` : '-';
+  if(platform==='both'){
+    function catPopPlatform(p,dev){
+      const b=allCategoryData.filter(r=>r.date>=bStart&&r.date<=bEnd&&r.platform===p&&r.device===dev);
+      const a=allCategoryData.filter(r=>r.date>=aStart&&r.date<=aEnd&&r.platform===p&&r.device===dev);
+      return {avgB:b.length?b.reduce((s,r)=>s+r.rank,0)/b.length:null, avgA:a.length?a.reduce((s,r)=>s+r.rank,0)/a.length:null};
+    }
+    const iosCatPop=catPopPlatform('ios','iphone'), psCatPop=catPopPlatform('playstore','android');
+    const iosCatD=rankDir(iosCatPop.avgB,iosCatPop.avgA), psCatD=rankDir(psCatPop.avgB,psCatPop.avgA);
+    document.getElementById('summaryCategory').innerHTML =
+      `<span style="font-size:.75rem">iOS: <span class="${iosCatD.cls}">${fmtRank(iosCatPop.avgB)} → ${fmtRank(iosCatPop.avgA)}${iosCatD.label}</span></span>`
+      +`<br><span style="font-size:.75rem">PS: <span class="${psCatD.cls}">${fmtRank(psCatPop.avgB)} → ${fmtRank(psCatPop.avgA)}${psCatD.label}</span></span>`;
+  } else {
+    let catBefore = allCategoryData.filter(r=>r.date>=bStart&&r.date<=bEnd&&r.platform===platform);
+    let catAfter = allCategoryData.filter(r=>r.date>=aStart&&r.date<=aEnd&&r.platform===platform);
+    const avgCatB = catBefore.length? catBefore.reduce((s,r)=>s+r.rank,0)/catBefore.length:null;
+    const avgCatA = catAfter.length? catAfter.reduce((s,r)=>s+r.rank,0)/catAfter.length:null;
+    const catD = rankDir(avgCatB,avgCatA);
+    document.getElementById('summaryCategory').innerHTML = avgCatB!=null&&avgCatA!=null
+      ? `<span class="${catD.cls}">${fmtRank(avgCatB)} <span class="arrow">→</span> ${fmtRank(avgCatA)}${catD.label}</span>` : '-';
+  }
 
-  // ASO 순수 임팩트 (YoY 보정) - Play Store only
+  // ASO 순수 임팩트 (PoP 비교) - Play Store only
   const psDlAll = allDownloadData.filter(r=>r.platform==='playstore');
 
   const psBefore26 = psDlAll.filter(r=>r.date>=bStart&&r.date<=bEnd);
@@ -428,29 +594,48 @@ function updatePopCompare(){
     cvrEl.innerHTML = '-';
   }
 
+  // ASO 순수 임팩트 - 키워드 다운로드 증분 기반
   const impactEl = document.getElementById('summaryAsoImpact');
-  if(avgB26&&avgA26&&avgB25&&avgA25){
-    // YoY 하락률 = Before 기간의 2026/2025 비율
-    const yoyDecline = avgB26 / avgB25;
-    // 기대값 = 2025 After × YoY 하락률 (하락 트렌드 유지 가정)
-    const expected26After = avgA25 * yoyDecline;
-    // ASO 임팩트 = 실제 vs 기대값 차이
-    const impact = (avgA26 - expected26After) / expected26After * 100;
-    const cls = impact>0?'improve':impact<0?'worsen':'neutral';
-    const yoyPct = ((yoyDecline-1)*100).toFixed(1);
-    impactEl.innerHTML = `<span class="${cls}">${impact>0?'+':''}${impact.toFixed(1)}%</span>`
-      +`<br><span style="font-size:.7rem;color:var(--text-muted)">실제 ${Math.round(avgA26)}회/일 vs 기대 ${Math.round(expected26After)}회/일</span>`
-      +`<br><span style="font-size:.65rem;color:var(--text-muted)">YoY 하락률: ${yoyPct>0?'+':''}${yoyPct}%</span>`;
-    document.getElementById('summaryAsoMethod').innerHTML =
-      `<b>추산방식</b> (Play Store 기준)`
-      +`<br>Before: ${before7}~${addDays(d,-1)} / After: ${d}~${after7}`
-      +`<br>① YoY 하락률 = 2026 Before 평균(${Math.round(avgB26)}) / 2025 동기간(${Math.round(avgB25)}) = ${(yoyDecline*100).toFixed(1)}%`
-      +`<br>② 기대값 = 2025 After 동기간(${Math.round(avgA25)}) × 하락률(${(yoyDecline*100).toFixed(1)}%) = ${Math.round(expected26After)}회/일`
-      +`<br>③ ASO 임팩트 = (실제 ${Math.round(avgA26)} − 기대 ${Math.round(expected26After)}) / ${Math.round(expected26After)} = <b>${impact>0?'+':''}${impact.toFixed(1)}%</b>`
-      +`<br><br><span style="color:var(--text-muted)">* "YoY 하락 추세대로라면 ${Math.round(expected26After)}회/일이어야 하는데, 실제 ${Math.round(avgA26)}회/일 → 차이분이 ASO 순수 효과"</span>`;
+  const methodEl = document.getElementById('summaryAsoMethod');
+  const kwInstPlatform = allKwInstallData.filter(r=>r.platform==='playstore');
+  const kwInstBefore = kwInstPlatform.filter(r=>r.week_start>=bStart&&r.week_start<=bEnd);
+  const kwInstAfter = kwInstPlatform.filter(r=>r.week_start>=aStart&&r.week_start<=aEnd);
+
+  // 주차 수 계산 (주간 데이터이므로 주당 평균으로 비교)
+  const weeksB = [...new Set(kwInstBefore.map(r=>r.week_start))].length;
+  const weeksA = [...new Set(kwInstAfter.map(r=>r.week_start))].length;
+  const totalInstB = kwInstBefore.reduce((s,r)=>s+r.installs,0);
+  const totalInstA = kwInstAfter.reduce((s,r)=>s+r.installs,0);
+  const weeklyAvgB = weeksB>0? totalInstB/weeksB : 0;
+  const weeklyAvgA = weeksA>0? totalInstA/weeksA : 0;
+
+  if(weeksB>0||weeksA>0){
+    const weeklyDiff = weeklyAvgA - weeklyAvgB;
+    const weeklyPct = weeklyAvgB>0? (weeklyDiff/weeklyAvgB*100) : (weeklyAvgA>0?100:0);
+    const totalDiff = totalInstA - totalInstB;
+    const cls = weeklyDiff>0?'improve':weeklyDiff<0?'worsen':'neutral';
+    const arrow = weeklyDiff>0?'▲':weeklyDiff<0?'▼':'';
+
+    impactEl.innerHTML = `<span class="${cls}">${arrow} 주당 ${Math.abs(Math.round(weeklyDiff))}건 (${weeklyPct>0?'+':''}${weeklyPct.toFixed(1)}%)</span>`
+      +`<br><span style="font-size:.75rem;color:var(--text-muted)">${Math.round(weeklyAvgB)}건/주 → ${Math.round(weeklyAvgA)}건/주</span>`;
+
+    // 키워드별 증감 Top 기여자
+    const kwMap = {};
+    kwInstBefore.forEach(r=>{kwMap[r.keyword]=(kwMap[r.keyword]||{b:0,a:0});kwMap[r.keyword].b+=r.installs});
+    kwInstAfter.forEach(r=>{kwMap[r.keyword]=(kwMap[r.keyword]||{b:0,a:0});kwMap[r.keyword].a+=r.installs});
+    const kwList = Object.entries(kwMap).map(([kw,v])=>({kw,diff:v.a/Math.max(weeksA,1)-v.b/Math.max(weeksB,1)})).sort((a,b)=>b.diff-a.diff);
+    const top3 = kwList.slice(0,3).filter(k=>k.diff>0);
+    const bot3 = kwList.slice(-3).filter(k=>k.diff<0).reverse();
+
+    methodEl.innerHTML = `<b>추산방식</b> 키워드 검색 유입 설치 PoP 비교`
+      +`<br>Before: ${weeksB}주 총 ${totalInstB}건 (주당 ${Math.round(weeklyAvgB)}건)`
+      +`<br>After: ${weeksA}주 총 ${totalInstA}건 (주당 ${Math.round(weeklyAvgA)}건)`
+      +`<br>증분: <b>${totalDiff>0?'+':''}${totalDiff}건</b> (주당 ${weeklyDiff>0?'+':''}${Math.round(weeklyDiff)}건)`
+      +(top3.length?`<br><br><span style="color:var(--green)">▲ 상승 기여:</span> ${top3.map(k=>`${k.kw}(+${Math.round(k.diff)}/주)`).join(', ')}`:'')
+      +(bot3.length?`<br><span style="color:var(--red)">▼ 하락 기여:</span> ${bot3.map(k=>`${k.kw}(${Math.round(k.diff)}/주)`).join(', ')}`:'');
   } else {
     impactEl.innerHTML = '-';
-    document.getElementById('summaryAsoMethod').innerHTML = '';
+    methodEl.innerHTML = '';
   }
 }
 
@@ -582,6 +767,7 @@ function renderKeywordChart(){
   ctx.parentElement.style.height = '420px';
   keywordChart = new Chart(ctx, cfg);
 }
+
 
 // --- Download chart ---
 function renderDownloadChart(){
@@ -923,6 +1109,8 @@ function renderRatingChart(){
 
   const dates = psRatings.map(r=>r.date);
   const dailyAvg = psRatings.map(r=>{
+    // BQ daily_avg_rating 우선, 없으면 star 분포로 계산
+    if(r.daily_avg_rating!=null&&r.daily_avg_rating>0) return r.daily_avg_rating;
     const total = r.star5+r.star4+r.star3+r.star2+r.star1;
     return total>0? (r.star5*5+r.star4*4+r.star3*3+r.star2*2+r.star1*1)/total : null;
   });
@@ -936,15 +1124,14 @@ function renderRatingChart(){
 
   // 최근 28일 평균
   const last28 = psRatings.slice(-28);
-  let totalStars=0, totalCount=0;
-  last28.forEach(r=>{
-    const cnt=r.star5+r.star4+r.star3+r.star2+r.star1;
-    totalStars+=r.star5*5+r.star4*4+r.star3*3+r.star2*2+r.star1*1;
-    totalCount+=cnt;
-  });
-  const avg28 = totalCount>0? totalStars/totalCount : null;
+  const last28Avg = last28.map(r=>{
+    if(r.daily_avg_rating!=null&&r.daily_avg_rating>0) return r.daily_avg_rating;
+    const total=r.star5+r.star4+r.star3+r.star2+r.star1;
+    return total>0?(r.star5*5+r.star4*4+r.star3*3+r.star2*2+r.star1*1)/total:null;
+  }).filter(v=>v!=null);
+  const avg28 = last28Avg.length? last28Avg.reduce((s,v)=>s+v,0)/last28Avg.length : null;
   document.getElementById('ratingAvgValue').innerHTML = avg28!=null
-    ? `${avg28.toFixed(2)} <span style="font-size:.8rem;color:var(--text-muted)">/ 5.0 (${totalCount}건)</span>` : '-';
+    ? `${avg28.toFixed(2)} <span style="font-size:.8rem;color:var(--text-muted)">/ 5.0 (최근 ${last28Avg.length}일)</span>` : '-';
 
   const cfg = {
     type:'line',
@@ -963,7 +1150,19 @@ function renderRatingChart(){
       },
       interaction:{mode:'index',intersect:false},
       plugins:{
-        tooltip:{mode:'index',intersect:false,callbacks:{title:ctx=>ctx[0]?.label||'',label:ctx=>ctx.raw!=null?`${ctx.dataset.label}: ${ctx.raw.toFixed(2)}`:null}},
+        tooltip:{mode:'index',intersect:false,callbacks:{
+          title:ctx=>ctx[0]?.label||'',
+          label:ctx=>ctx.raw!=null?`${ctx.dataset.label}: ${ctx.raw.toFixed(2)}`:null,
+          afterBody:ctx=>{
+            const date=dates[ctx[0]?.dataIndex];
+            const r=psRatings.find(d=>d.date===date);
+            if(!r)return '';
+            const total=r.star5+r.star4+r.star3+r.star2+r.star1;
+            if(total>0) return `\n★5: ${r.star5}  ★4: ${r.star4}  ★3: ${r.star3}  ★2: ${r.star2}  ★1: ${r.star1}  (총 ${total}건)`;
+            if(r.daily_avg_rating) return `\n평균: ${r.daily_avg_rating.toFixed(2)} (BQ 데이터)`;
+            return '';
+          }
+        }},
         legend:{labels:{color:'#e8e8e8',usePointStyle:true,pointStyle:'circle'}},
         annotation:{annotations:Object.fromEntries(getAnnoLines(dates).map((a,i)=>['line'+i,a]))}
       }
@@ -1054,6 +1253,7 @@ function updateAll(){
 
   renderCvrChart();
   renderStoreViewChart();
+  renderRatingChart();
   renderAnnoTable();
 }
 
