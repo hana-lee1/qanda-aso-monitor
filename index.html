@@ -145,26 +145,26 @@ if(sessionStorage.getItem('aso_auth')==='1') document.getElementById('lockScreen
 
 <div class="section" id="yoySection">
   <h2>YoY 신규 Install 비교</h2>
-  <div id="yoyNotice" style="display:none;color:var(--text-muted);padding:20px">Play Store 데이터만 지원</div>
+  <div id="yoyNotice" style="display:none;color:var(--text-muted);padding:20px">데이터 없음</div>
   <div class="chart-container" id="yoyChartWrap"><canvas id="yoyChart"></canvas></div>
 </div>
 
 
 <div class="section" id="cvrSection">
   <h2>스토어 방문 → Install 전환율 (CVR)</h2>
-  <div id="cvrNotice" style="display:none;color:var(--text-muted);padding:20px">Play Store 데이터만 지원</div>
+  <div id="cvrNotice" style="display:none;color:var(--text-muted);padding:20px">데이터 없음</div>
   <div class="chart-container" id="cvrChartWrap"><canvas id="cvrChart"></canvas></div>
 </div>
 
 <div class="section" id="storeViewSection">
   <h2>스토어 등록정보 방문 수 추이</h2>
-  <div id="storeViewNotice" style="display:none;color:var(--text-muted);padding:20px">Play Store 데이터만 지원</div>
+  <div id="storeViewNotice" style="display:none;color:var(--text-muted);padding:20px">데이터 없음</div>
   <div class="chart-container" id="storeViewChartWrap"><canvas id="storeViewChart"></canvas></div>
 </div>
 
 <div class="section" id="ratingSection">
   <h2>일간 평점 현황</h2>
-  <div id="ratingNotice" style="display:none;color:var(--text-muted);padding:20px">Play Store 데이터만 지원</div>
+  <div id="ratingNotice" style="display:none;color:var(--text-muted);padding:20px">데이터 없음</div>
   <div id="ratingAvgCard" class="card" style="margin-bottom:16px;display:none">
     <div class="card-label">최근 28일 평균 평점</div>
     <div class="card-value" id="ratingAvgValue">-</div>
@@ -894,16 +894,14 @@ function renderCategoryChart(){
 function renderYoyChart(){
   const wrap = document.getElementById('yoyChartWrap');
   const notice = document.getElementById('yoyNotice');
-  if(platform==='ios'){
-    wrap.style.display='none'; notice.style.display='';
-    if(yoyChart){yoyChart.destroy();yoyChart=null;}
-    return;
-  }
   wrap.style.display=''; notice.style.display='none';
 
-  const psDl = allDownloadData.filter(d=>d.platform==='playstore');
-  const dl2025 = psDl.filter(d=>d.date.startsWith('2025'));
-  const dl2026 = psDl.filter(d=>d.date.startsWith('2026'));
+  const platDl = platform==='both'? allDownloadData : allDownloadData.filter(d=>d.platform===platform);
+  // Aggregate by date (for 'both', sum iOS+PS per date)
+  const dlByDate = {};
+  platDl.forEach(r=>{ dlByDate[r.date] = (dlByDate[r.date]||0) + r.downloads; });
+  const dl2025 = Object.entries(dlByDate).filter(([d])=>d.startsWith('2025')).map(([d,v])=>({date:d,downloads:v}));
+  const dl2026 = Object.entries(dlByDate).filter(([d])=>d.startsWith('2026')).map(([d,v])=>({date:d,downloads:v}));
 
   const map2025 = Object.fromEntries(dl2025.map(r=>[r.date.slice(5),r.downloads]));
   const map2026 = Object.fromEntries(dl2026.map(r=>[r.date.slice(5),r.downloads]));
@@ -956,23 +954,20 @@ function renderYoyChart(){
 function renderCvrChart(){
   const wrap = document.getElementById('cvrChartWrap');
   const notice = document.getElementById('cvrNotice');
-  if(platform==='ios'){
-    wrap.style.display='none'; notice.style.display='';
-    if(cvrChart){cvrChart.destroy();cvrChart=null;}
-    return;
-  }
   wrap.style.display=''; notice.style.display='none';
 
-  const psViews = allStoreViewData.filter(d=>d.platform==='playstore');
-  if(!psViews.length){
+  const platViews = platform==='both'? allStoreViewData : allStoreViewData.filter(d=>d.platform===platform);
+  if(!platViews.length){
     wrap.innerHTML='<div style="color:var(--text-muted);padding:20px;text-align:center">데이터 준비중...</div>';
     if(cvrChart){cvrChart.destroy();cvrChart=null;}
     return;
   }
 
-  const psDl = allDownloadData.filter(d=>d.platform==='playstore');
-  const dlMap = Object.fromEntries(psDl.map(r=>[r.date,r.downloads]));
-  const viewMap = Object.fromEntries(psViews.map(r=>[r.date,r.views]));
+  const platDl = platform==='both'? allDownloadData : allDownloadData.filter(d=>d.platform===platform);
+  // Aggregate by date
+  const dlMap = {}, viewMap = {};
+  platDl.forEach(r=>{ dlMap[r.date]=(dlMap[r.date]||0)+r.downloads; });
+  platViews.forEach(r=>{ viewMap[r.date]=(viewMap[r.date]||0)+r.views; });
 
   const allDates = [...new Set([...Object.keys(dlMap),...Object.keys(viewMap)])].sort();
 
@@ -1037,16 +1032,15 @@ function renderCvrChart(){
 function renderStoreViewChart(){
   const wrap = document.getElementById('storeViewChartWrap');
   const notice = document.getElementById('storeViewNotice');
-  if(platform==='ios'){
-    wrap.style.display='none'; notice.style.display='';
-    if(storeViewChart){storeViewChart.destroy();storeViewChart=null;}
-    return;
-  }
   wrap.style.display=''; notice.style.display='none';
 
-  const psViews = allStoreViewData.filter(d=>d.platform==='playstore');
-  const dates2025 = psViews.filter(d=>d.date.startsWith('2025')).sort((a,b)=>a.date.localeCompare(b.date));
-  const dates2026 = psViews.filter(d=>d.date.startsWith('2026')).sort((a,b)=>a.date.localeCompare(b.date));
+  const platViews = platform==='both'? allStoreViewData : allStoreViewData.filter(d=>d.platform===platform);
+  // Aggregate by date
+  const viewByDate = {};
+  platViews.forEach(r=>{ viewByDate[r.date]=(viewByDate[r.date]||0)+r.views; });
+  const viewEntries = Object.entries(viewByDate).map(([d,v])=>({date:d,views:v}));
+  const dates2025 = viewEntries.filter(d=>d.date.startsWith('2025')).sort((a,b)=>a.date.localeCompare(b.date));
+  const dates2026 = viewEntries.filter(d=>d.date.startsWith('2026')).sort((a,b)=>a.date.localeCompare(b.date));
 
   const map2025 = Object.fromEntries(dates2025.map(d=>[d.date.slice(5),d.views]));
   const map2026 = Object.fromEntries(dates2026.map(d=>[d.date.slice(5),d.views]));
@@ -1093,14 +1087,9 @@ function renderRatingChart(){
   const wrap = document.getElementById('ratingChartWrap');
   const notice = document.getElementById('ratingNotice');
   const avgCard = document.getElementById('ratingAvgCard');
-  if(platform==='ios'){
-    wrap.style.display='none'; notice.style.display=''; avgCard.style.display='none';
-    if(ratingChart){ratingChart.destroy();ratingChart=null;}
-    return;
-  }
   wrap.style.display=''; notice.style.display='none'; avgCard.style.display='';
 
-  const psRatings = allRatingData.filter(d=>d.platform==='playstore').sort((a,b)=>a.date.localeCompare(b.date));
+  const psRatings = (platform==='both'? allRatingData : allRatingData.filter(d=>d.platform===platform)).sort((a,b)=>a.date.localeCompare(b.date));
   if(!psRatings.length){
     wrap.innerHTML='<div style="color:var(--text-muted);padding:20px;text-align:center">데이터 없음</div>';
     avgCard.style.display='none';
