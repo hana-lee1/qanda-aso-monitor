@@ -1,7 +1,7 @@
 node_modules/
-*.js
 package*.json
 setup.sql
 *.tsv
 *.log
-*.sh
+.st-session/
+.asc-session/

@@ -195,7 +195,7 @@ const SUPABASE_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZ
 const sb = supabase.createClient(SUPABASE_URL, SUPABASE_KEY);
 
 const IOS_KEYWORDS = ['ebs','개념원리ai','공부','공부앱','과학','답지','대성마이맥','메가스터디','모의고사','문제','문제집','수학','수학문제풀이','열품타','이투스','찰칵','풀이','수학대왕','올클','내신'];
-const PS_KEYWORDS = ['개념원리ai','공부','답지','대성마이맥','디지털교과서','모의고사','문제','문제집','수학','수학대왕','수학문제','수학문제풀이','숙제','열품타','오르조','올클','인강','풀이','내신','찰칵'];
+const PS_KEYWORDS = ['개념원리ai','공부','답지','대성마이맥','디지털교과서','모의고사','문제','문제집','수학','수학대왕','수학문제','수학문제풀이','숙제','시험','열품타','오르조','올클','인강','풀이','내신','찰칵'];
 
 let platform = 'ios';
 let allKeywordData = [];
@@ -207,6 +207,7 @@ let keywordChart, downloadChart, categoryChart, yoyChart, asoImpactChart, cvrCha
 let allStoreViewData = [];
 let allRatingData = [];
 let allKwInstallData = [];
+let allKwDailyDlData = [];
 
 const COLORS = ['#4f8cff','#22c55e','#f59e0b','#ef4444','#a855f7','#06b6d4','#ec4899','#84cc16','#f97316','#6366f1',
   '#14b8a6','#e879f9','#facc15','#fb923c','#38bdf8','#c084fc','#4ade80','#f472b6','#a3e635','#2dd4bf'];
@@ -234,7 +235,7 @@ async function fetchAllRows(table, orderCol='date'){
   let all=[], from=0, pageSize=1000;
   while(true){
     const {data,error}=await sb.from(table).select('*').order(orderCol,{ascending:true}).range(from,from+pageSize-1);
-    if(error)break;
+    if(error){console.error(`[${table}] fetch error:`,error.message);break;}
     all=all.concat(data||[]);
     if(!data||data.length<pageSize)break;
     from+=pageSize;
@@ -242,7 +243,7 @@ async function fetchAllRows(table, orderCol='date'){
   return all;
 }
 async function fetchAll(){
-  [allKeywordData, allDownloadData, allCategoryData, allAnnotations, allStoreViewData, allRatingData, allKwInstallData] = await Promise.all([
+  [allKeywordData, allDownloadData, allCategoryData, allAnnotations, allStoreViewData, allRatingData, allKwInstallData, allKwDailyDlData] = await Promise.all([
     fetchAllRows('aso_keyword_rankings'),
     fetchAllRows('aso_downloads'),
     fetchAllRows('aso_category_rankings'),
@@ -250,7 +251,16 @@ async function fetchAll(){
     fetchAllRows('aso_store_views'),
     fetchAllRows('aso_ratings'),
     fetchAllRows('aso_keyword_installs','week_start'),
+    fetchAllRows('aso_keyword_downloads_daily'),
   ]);
+  // daily install 데이터를 weekly 형식으로 변환하여 allKwInstallData에 합침
+  // (date → week_start, est_downloads → installs)
+  const dailyAsWeekly = allKwDailyDlData.map(r => ({
+    ...r,
+    week_start: r.date,
+    installs: r.est_downloads
+  }));
+  allKwInstallData = allKwInstallData.concat(dailyAsWeekly);
 }
 
 function filterPlatform(data, plat){
@@ -437,30 +447,35 @@ function updatePopCompare(){
   // Keyword PoP table
   const kwPopTable = document.getElementById('keywordPopTable');
   const kwPopBody = document.getElementById('keywordPopBody');
-  if(platform!=='both'){
+  {
     kwPopTable.style.display='';
+    // Both일 때 플랫폼별로 PoP 테이블 생성
+    const platforms = platform==='both' ? ['ios','playstore'] : [platform];
     const keywords = getKeywordsForPlatform(platform);
     const rows = [];
-    const bDates = [...new Set(kwBefore.map(r=>r.date))];
-    const aDates = [...new Set(kwAfter.map(r=>r.date))];
-    keywords.forEach(kw=>{
-      const bRows = kwBefore.filter(r=>r.keyword===kw);
-      const aRows = kwAfter.filter(r=>r.keyword===kw);
-      const bMap = Object.fromEntries(bRows.map(r=>[r.date,r.rank]));
-      const aMap = Object.fromEntries(aRows.map(r=>[r.date,r.rank]));
-      // 공란=200으로 계산, 표시는 원래 값 기준
-      const avgB = bDates.length? bDates.reduce((s,d)=>s+(bMap[d]??200),0)/bDates.length : null;
-      const avgA = aDates.length? aDates.reduce((s,d)=>s+(aMap[d]??200),0)/aDates.length : null;
-      // 실제 데이터 있는 값의 평균 (표시용)
-      const dispB = bRows.length? bRows.reduce((s,r)=>s+r.rank,0)/bRows.length : null;
-      const dispA = aRows.length? aRows.reduce((s,r)=>s+r.rank,0)/aRows.length : null;
-      // Keyword install data (weekly, match weeks overlapping the period)
-      const kwInstPlatform = allKwInstallData.filter(r=>r.platform===platform);
-      const bInstRows = kwInstPlatform.filter(r=>r.keyword===kw&&r.week_start>=bStart&&r.week_start<=bEnd);
-      const aInstRows = kwInstPlatform.filter(r=>r.keyword===kw&&r.week_start>=aStart&&r.week_start<=aEnd);
-      const sumInstB = bInstRows.reduce((s,r)=>s+r.installs,0);
-      const sumInstA = aInstRows.reduce((s,r)=>s+r.installs,0);
-      rows.push({kw, avgB, avgA, dispB, dispA, sumInstB, sumInstA});
+    platforms.forEach(plat => {
+      const pKwBefore = allKeywordData.filter(r=>r.date>=bStart&&r.date<=bEnd&&r.platform===plat);
+      const pKwAfter = allKeywordData.filter(r=>r.date>=aStart&&r.date<=aEnd&&r.platform===plat);
+      const bDatesP = [...new Set(pKwBefore.map(r=>r.date))];
+      const aDatesP = [...new Set(pKwAfter.map(r=>r.date))];
+      const platKws = plat==='ios'?IOS_KEYWORDS:PS_KEYWORDS;
+      platKws.forEach(kw=>{
+        const bRows = pKwBefore.filter(r=>r.keyword===kw);
+        const aRows = pKwAfter.filter(r=>r.keyword===kw);
+        const bMap = Object.fromEntries(bRows.map(r=>[r.date,r.rank]));
+        const aMap = Object.fromEntries(aRows.map(r=>[r.date,r.rank]));
+        const avgB = bDatesP.length? bDatesP.reduce((s,d)=>s+(bMap[d]??200),0)/bDatesP.length : null;
+        const avgA = aDatesP.length? aDatesP.reduce((s,d)=>s+(aMap[d]??200),0)/aDatesP.length : null;
+        const dispB = bRows.length? bRows.reduce((s,r)=>s+r.rank,0)/bRows.length : null;
+        const dispA = aRows.length? aRows.reduce((s,r)=>s+r.rank,0)/aRows.length : null;
+        const kwInstPlatform = allKwInstallData.filter(r=>r.platform===plat);
+        const bInstRows = kwInstPlatform.filter(r=>r.keyword===kw&&r.week_start>=bStart&&r.week_start<=bEnd);
+        const aInstRows = kwInstPlatform.filter(r=>r.keyword===kw&&r.week_start>=aStart&&r.week_start<=aEnd);
+        const sumInstB = bInstRows.reduce((s,r)=>s+r.installs,0);
+        const sumInstA = aInstRows.reduce((s,r)=>s+r.installs,0);
+        const platLabel = platform==='both'?(plat==='ios'?'iOS':'PS')+' ':''
+        rows.push({kw: platLabel+kw, avgB, avgA, dispB, dispA, sumInstB, sumInstA});
+      });
     });
     // Sort by install change (biggest increase first)
     rows.sort((a,b)=>(b.sumInstA-b.sumInstB)-(a.sumInstA-a.sumInstB));
@@ -473,18 +488,37 @@ function updatePopCompare(){
       const instDir = instDiff>0?'improve':instDiff<0?'worsen':'neutral';
       const arrow = instDiff>0?'▲':instDiff<0?'▼':'';
       const instTxt = `<span class="${instDir}">${arrow} ${Math.abs(instDiff)}건${r.sumInstB>0?' ('+(instPct>0?'+':'')+instPct.toFixed(0)+'%)':instDiff>0?' (신규)':''}</span>`;
-      // 표시: 실제 데이터가 있으면 실제 평균, 없으면 "-" (계산은 200 포함)
       const dispBTxt = r.dispB!=null? r.dispB.toFixed(1)+'위' : '-';
       const dispATxt = r.dispA!=null? r.dispA.toFixed(1)+'위' : '-';
       return `<tr><td>${r.kw}</td><td>${dispBTxt}</td><td>${dispATxt}</td><td>${rankTxt}</td><td>${r.sumInstB}건</td><td>${r.sumInstA}건</td><td>${instTxt}</td></tr>`;
     }).join('');
     // Weekly keyword download table
     const kwWeeklyTable = document.getElementById('kwWeeklyTable');
-    const kwInstAll = allKwInstallData.filter(r=>r.platform===platform);
+    const kwInstAll = platform==='both'? allKwInstallData : allKwInstallData.filter(r=>r.platform===platform);
     const allWeeks = [...new Set(kwInstAll.map(r=>r.week_start))].sort();
     if(allWeeks.length){
       kwWeeklyTable.style.display='';
-      const allKws = [...new Set(kwInstAll.map(r=>r.keyword))];
+      const allKwsRaw = [...new Set(kwInstAll.map(r=>r.keyword))];
+      // Both 모드: 플랫폼 구분 라벨 추가
+      let allKws, kwInstLookup;
+      if(platform==='both'){
+        allKws = [];
+        kwInstLookup = {};
+        ['ios','playstore'].forEach(plat=>{
+          const prefix = plat==='ios'?'iOS ':'PS ';
+          const platData = kwInstAll.filter(r=>r.platform===plat);
+          const platKws = [...new Set(platData.map(r=>r.keyword))];
+          platKws.forEach(kw=>{
+            const key = prefix+kw;
+            allKws.push(key);
+            kwInstLookup[key] = platData.filter(r=>r.keyword===kw);
+          });
+        });
+      } else {
+        allKws = allKwsRaw;
+        kwInstLookup = {};
+        allKws.forEach(kw=>{ kwInstLookup[kw] = kwInstAll.filter(r=>r.keyword===kw); });
+      }
       // Header
       const weekLabels = allWeeks.map(w=>{const e=new Date(w);e.setDate(e.getDate()+6);return w.slice(5)+'~'+e.toISOString().slice(5,10)});
       document.getElementById('kwWeeklyHead').innerHTML = '<tr><th>키워드</th>'+weekLabels.map(w=>'<th>'+w+'</th>').join('')+'<th>합계</th></tr>';
@@ -492,7 +526,7 @@ function updatePopCompare(){
       const weekTotals = allWeeks.map(()=>0);
       let grandTotal = 0;
       const bodyRows = allKws.map(kw=>{
-        const kwRows = kwInstAll.filter(r=>r.keyword===kw);
+        const kwRows = kwInstLookup[kw]||[];
         const map = Object.fromEntries(kwRows.map(r=>[r.week_start,r.installs]));
         let kwSum = 0;
         const cells = allWeeks.map((w,i)=>{
@@ -507,9 +541,6 @@ function updatePopCompare(){
     } else {
       kwWeeklyTable.style.display='none';
     }
-  } else {
-    kwPopTable.style.display='none';
-    document.getElementById('kwWeeklyTable').style.display='none';
   }
 
   // Download compare
@@ -1229,10 +1260,14 @@ document.getElementById('platformTabs').addEventListener('click',e=>{
 function updateAll(){
   updateSummary();
   const kwSection = document.getElementById('keywordSection');
+  kwSection.style.display='';
   if(platform==='both'){
-    kwSection.style.display='none';
+    // Both: 키워드 토글과 차트 숨기고 테이블만 표시 (PoP에서 표시)
+    document.getElementById('keywordToggles').innerHTML='';
+    if(keywordChart){keywordChart.destroy();keywordChart=null;}
+    document.getElementById('keywordChart').parentElement.style.display='none';
   } else {
-    kwSection.style.display='';
+    document.getElementById('keywordChart').parentElement.style.display='';
     buildKeywordToggles();
     renderKeywordChart();
   }
